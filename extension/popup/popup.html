@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>YOLOapply</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="mark">Y</div>
+      <div>
+        <strong>YOLOapply</strong>
+        <small data-role="conn">checking…</small>
+      </div>
+    </div>
+    <button class="icon" data-act="settings" title="Settings">⚙</button>
+  </header>
+
+  <section class="actions">
+    <button class="primary" data-act="save">Save current job</button>
+    <button class="secondary" data-act="fill">Auto-fill form</button>
+    <button class="secondary" data-act="answer">Answer open-ended Qs</button>
+    <button class="secondary" data-act="resume">Upload resume</button>
+    <button class="secondary" data-act="personalize" disabled>Personalize resume</button>
+    <button class="link" data-act="dashboard">Open dashboard ↗</button>
+  </section>
+
+  <div class="status hidden" data-role="status"></div>
+
+  <section class="recent">
+    <h3>Recent applications</h3>
+    <ul data-role="apps"><li class="muted">Loading…</li></ul>
+  </section>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

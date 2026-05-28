@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Application {
+  id            String   @id @default(cuid())
+  company       String
+  role          String
+  source        String   // "linkedin" | "portal" | "manual" | "cold_email"
+  jdUrl         String?
+  jdText        String?
+  location      String?
+  status        String   @default("draft") // draft | personalized | applied | replied | interview | offer | rejected | closed
+  resumeTexPath String?
+  resumePdfPath String?
+  applyUrl      String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  appliedAt     DateTime?
+  events        Event[]
+  contacts      Contact[]
+  emails        Email[]
+}
+
+model Contact {
+  id            String   @id @default(cuid())
+  name          String
+  title         String?
+  company       String
+  email         String?
+  linkedinUrl   String?
+  source        String?  // "manual" | "scrape" | "cold_email_target"
+  notes         String?
+  createdAt     DateTime @default(now())
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  emails        Email[]
+}
+
+model Email {
+  id            String   @id @default(cuid())
+  toAddress     String
+  toName        String?
+  fromAddress   String
+  subject       String
+  body          String
+  status        String   @default("draft") // draft | sent | replied | bounced | failed
+  sentAt        DateTime?
+  messageId     String?
+  errorMessage  String?
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  contactId     String?
+  contact       Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  // Full draft-page context, persisted so the contact detail view can reconstruct the original draft.
+  recipientTitle String?
+  recipientCompany String?
+  roleTarget    String?  // role they were hiring for (if specified)
+  hookContext   String?  // the user-supplied hook / recent news / context
+  rationale     String?  // AI's one-line explanation of which proof point was chosen
+  attachSource  String?  // "personalized" | "generic" | "none"
+  createdAt     DateTime @default(now())
+}
+
+model Event {
+  id            String   @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  type          String   // "status_change" | "personalized" | "applied" | "email_sent" | "note"
+  detail        String?
+  createdAt     DateTime @default(now())
+}

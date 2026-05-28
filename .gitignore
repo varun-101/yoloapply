@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+.env
+.env.local
+dev.db
+dev.db-journal
+prisma/dev.db*
+generated/
+storage/
+playwright-report
+test-results
+.DS_Store
+*.log
+
