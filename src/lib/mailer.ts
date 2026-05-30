@@ -27,6 +27,7 @@ export interface SendOptions {
   subject: string;
   body: string; // plain text
   attachResumePdfPath?: string | null;
+  attachCoverLetterPdfPath?: string | null;
 }
 
 export async function sendEmail(opts: SendOptions): Promise<{ messageId: string }> {
@@ -39,6 +40,14 @@ export async function sendEmail(opts: SendOptions): Promise<{ messageId: string 
     const buf = await readFile(opts.attachResumePdfPath);
     attachments.push({
       filename: `Varun_Chandwani_Resume.pdf`,
+      content: buf,
+      contentType: "application/pdf",
+    });
+  }
+  if (opts.attachCoverLetterPdfPath) {
+    const buf = await readFile(opts.attachCoverLetterPdfPath);
+    attachments.push({
+      filename: `Varun_Chandwani_CoverLetter.pdf`,
       content: buf,
       contentType: "application/pdf",
     });

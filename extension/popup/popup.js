@@ -163,6 +163,10 @@ document.addEventListener("click", async (e) => {
       setStatus("info", "Uploading resume PDF…");
       await triggerContentButton("resume");
       setStatus("ok", "Done — check the widget on the page.");
+    } else if (act === "cover") {
+      setStatus("info", "Generating cover letter (slow)… keep this open.");
+      await triggerContentButton("cover");
+      setStatus("ok", "Done — check the widget on the page.");
     } else if (act === "qa-generate") {
       await generateAnswer(e.target);
     } else if (act === "qa-clear") {

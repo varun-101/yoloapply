@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
     applicationId,
     contactId,
     attachResume,
+    attachCoverLetter,
     recipientTitle,
     recipientCompany,
     roleTarget,
@@ -30,18 +31,20 @@ export async function POST(req: NextRequest) {
   //   3. no attachment
   let attachPath: string | null = null;
   let attachSource: "personalized" | "generic" | "none" = "none";
-  if (attachResume) {
-    if (applicationId) {
-      const app = await prisma.application.findUnique({ where: { id: applicationId } });
-      if (app?.resumePdfPath) {
-        attachPath = app.resumePdfPath;
-        attachSource = "personalized";
-      }
+  let coverLetterPath: string | null = null;
+  if (applicationId && (attachResume || attachCoverLetter)) {
+    const app = await prisma.application.findUnique({ where: { id: applicationId } });
+    if (attachResume && app?.resumePdfPath) {
+      attachPath = app.resumePdfPath;
+      attachSource = "personalized";
     }
-    if (!attachPath && getGenericResumeInfo().exists) {
-      attachPath = genericResumePath();
-      attachSource = "generic";
+    if (attachCoverLetter && app?.coverLetterPdfPath) {
+      coverLetterPath = app.coverLetterPdfPath;
     }
+  }
+  if (attachResume && !attachPath && getGenericResumeInfo().exists) {
+    attachPath = genericResumePath();
+    attachSource = "generic";
   }
 
   // Upsert a Contact so this cold-email target shows up in /contacts.
@@ -103,6 +106,7 @@ export async function POST(req: NextRequest) {
       subject,
       body: emailBody,
       attachResumePdfPath: attachPath,
+      attachCoverLetterPdfPath: coverLetterPath,
     });
     const updated = await prisma.email.update({
       where: { id: draft.id },

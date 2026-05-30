@@ -3,7 +3,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Loader2, Wand2, Send, CheckCircle2, Globe } from "lucide-react";
+import { Loader2, Wand2, Send, CheckCircle2, Globe, FileSignature } from "lucide-react";
 
 const STATUSES = ["draft", "personalized", "applied", "replied", "interview", "offer", "rejected", "closed"];
 
@@ -14,6 +14,7 @@ export default function ApplicationActions(props: {
   status: string;
   hasJd: boolean;
   hasPdf: boolean;
+  hasCoverLetter: boolean;
   applyUrl: string | null;
 }) {
   const router = useRouter();
@@ -50,6 +51,21 @@ export default function ApplicationActions(props: {
     }
   }
 
+  async function coverLetter() {
+    setBusy("cover");
+    setErr(null);
+    try {
+      const res = await fetch(`/api/applications/${props.id}/cover-letter`, { method: "POST" });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error ?? "Failed");
+      startTransition(() => router.refresh());
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function autoApply() {
     setBusy("apply");
     setErr(null);
@@ -75,6 +91,10 @@ export default function ApplicationActions(props: {
           <Button onClick={personalize} disabled={!props.hasJd || busy !== null}>
             {busy === "personalize" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
             {props.hasPdf ? "Re-personalize resume" : "Personalize resume"}
+          </Button>
+          <Button onClick={coverLetter} disabled={busy !== null} variant="outline">
+            {busy === "cover" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSignature className="h-4 w-4" />}
+            {props.hasCoverLetter ? "Regenerate cover letter" : "Generate cover letter"}
           </Button>
           <Button onClick={autoApply} disabled={!props.applyUrl || !props.hasPdf || busy !== null} variant="outline">
             {busy === "apply" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />}

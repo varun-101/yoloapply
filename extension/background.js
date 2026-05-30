@@ -1,6 +1,6 @@
 // Background service worker. Routes messages between the popup and content
 // script and brokers calls to the backend.
-import { api, fetchResumeBlob } from "./lib/api.js";
+import { api, fetchResumeBlob, fetchCoverLetterBlob } from "./lib/api.js";
 import {
   getSettings,
   getTabState,
@@ -93,6 +93,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         case "resumeBlob": {
           const blob = await fetchResumeBlob(msg.appId);
+          const ab = await blob.arrayBuffer();
+          sendResponse({ ok: true, bytes: Array.from(new Uint8Array(ab)), type: blob.type });
+          return;
+        }
+        case "coverLetter": {
+          const r = await api.coverLetter(msg.id);
+          sendResponse({ ok: true, text: r.text });
+          return;
+        }
+        case "coverLetterBlob": {
+          const blob = await fetchCoverLetterBlob(msg.appId);
           const ab = await blob.arrayBuffer();
           sendResponse({ ok: true, bytes: Array.from(new Uint8Array(ab)), type: blob.type });
           return;

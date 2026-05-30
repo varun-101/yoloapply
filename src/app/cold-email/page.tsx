@@ -21,6 +21,7 @@ function ColdEmailInner() {
   const [emailBody, setEmailBody] = useState("");
   const [rationale, setRationale] = useState("");
   const [attachResume, setAttachResume] = useState(true);
+  const [attachCoverLetter, setAttachCoverLetter] = useState(false);
   const [hasGenericResume, setHasGenericResume] = useState<boolean | null>(null);
 
   const [busy, setBusy] = useState<"draft" | "send" | null>(null);
@@ -71,6 +72,7 @@ function ColdEmailInner() {
           emailBody,
           applicationId: applicationId || null,
           attachResume,
+          attachCoverLetter,
           recipientTitle,
           recipientCompany: company,
           roleTarget: role,
@@ -194,6 +196,22 @@ function ColdEmailInner() {
                 </span>
               </span>
             </label>
+            {applicationId && (
+              <label className="flex items-start gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={attachCoverLetter}
+                  onChange={(e) => setAttachCoverLetter(e.target.checked)}
+                />
+                <span>
+                  Attach cover letter.{" "}
+                  <span className="text-slate-500">
+                    Uses the cover letter generated for this application (generate it on the application page first).
+                  </span>
+                </span>
+              </label>
+            )}
 
             {err && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}
             {ok && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{ok}</div>}

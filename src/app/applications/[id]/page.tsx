@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDate, statusColor } from "@/lib/utils";
-import { Download, ExternalLink, FileText, Mail } from "lucide-react";
+import { Download, ExternalLink, FileText, Mail, FileSignature } from "lucide-react";
 import ApplicationActions from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +18,7 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
   if (!app) notFound();
 
   const hasPdf = !!app.resumePdfPath;
+  const hasCoverLetter = !!app.coverLetterPdfPath;
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -50,6 +51,13 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
             <Button asChild variant="outline">
               <a href={`/api/applications/${app.id}/resume?format=pdf&download=1`}>
                 <Download className="h-4 w-4" /> PDF
+              </a>
+            </Button>
+          )}
+          {hasCoverLetter && (
+            <Button asChild variant="outline">
+              <a href={`/api/applications/${app.id}/cover-letter?format=pdf`} target="_blank" rel="noreferrer">
+                <FileSignature className="h-4 w-4" /> Cover letter
               </a>
             </Button>
           )}
@@ -86,8 +94,28 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
             status={app.status}
             hasJd={!!app.jdText && app.jdText.length > 50}
             hasPdf={hasPdf}
+            hasCoverLetter={hasCoverLetter}
             applyUrl={app.applyUrl}
           />
+
+          {app.coverLetterText && (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle>Cover letter</CardTitle>
+                <a
+                  href={`/api/applications/${app.id}/cover-letter?format=pdf&download=1`}
+                  className="text-sm text-indigo-600 hover:underline inline-flex items-center gap-1"
+                >
+                  <Download className="h-3 w-3" /> Download PDF
+                </a>
+              </CardHeader>
+              <CardContent>
+                <div className="whitespace-pre-wrap text-sm text-slate-700 max-h-96 overflow-auto rounded border border-slate-100 p-3 bg-slate-50">
+                  {app.coverLetterText}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>

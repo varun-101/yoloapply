@@ -150,6 +150,18 @@ export function pdfExists(p: string | null | undefined): boolean {
   return !!p && existsSync(p);
 }
 
+export async function saveCoverLetterPdf(
+  applicationId: string,
+  pdf: Buffer
+): Promise<{ pdfPath: string }> {
+  const base = await ensureStorage();
+  const dir = path.join(base, "applications", applicationId);
+  await mkdir(dir, { recursive: true });
+  const pdfPath = path.join(dir, "cover-letter.pdf");
+  await writeFile(pdfPath, pdf);
+  return { pdfPath };
+}
+
 export async function countPdfPages(pdf: Buffer): Promise<number> {
   const doc = await PDFDocument.load(pdf, { ignoreEncryption: true, updateMetadata: false });
   return doc.getPageCount();

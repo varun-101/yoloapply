@@ -366,6 +366,7 @@
         <button class="yolo-btn yolo-secondary" data-act="personalize" disabled>Personalize resume</button>
         <button class="yolo-btn yolo-secondary" data-act="fill">Auto-fill this form</button>
         <button class="yolo-btn yolo-secondary" data-act="answer">Answer open-ended questions (LLM)</button>
+        <button class="yolo-btn yolo-secondary" data-act="cover">Cover letter (copy + upload)</button>
         <button class="yolo-btn yolo-secondary" data-act="resume">Upload resume PDF</button>
         <div class="yolo-status yolo-info yolo-hidden" data-role="status"></div>
         <div class="yolo-small">Tip: click the YOLOapply icon to open the popup.</div>
@@ -385,6 +386,7 @@
         else if (act === "personalize") await onPersonalize();
         else if (act === "fill") await onFill();
         else if (act === "answer") await onAnswer();
+        else if (act === "cover") await onCoverLetter();
         else if (act === "resume") await onResume();
       } catch (err) {
         showStatus("err", err?.message ?? String(err));
@@ -529,6 +531,90 @@
     showStatus(n ? "ok" : "err", n ? `Uploaded into ${n} input${n === 1 ? "" : "s"}.` : "Couldn't find a resume file input.");
   }
 
+  async function onCoverLetter() {
+    if (!state.applicationId) {
+      showStatus("err", "Save the job to the dashboard first, then generate the cover letter.");
+      return;
+    }
+    showStatus("info", "Generating a tailored cover letter (30-60s)…");
+    const r = await send({ type: "coverLetter", id: state.applicationId });
+    if (!r?.ok) throw new Error(r?.error ?? "cover letter generation failed");
+
+    // Copy the text so it can be pasted into a textarea.
+    const copied = await copyToClipboard(r.text || "");
+    // If a textarea looks like a cover-letter field, fill it directly.
+    const filled = fillCoverLetterTextarea(r.text || "");
+    // Upload the PDF into a cover-letter file slot if present.
+    const uploaded = await uploadCoverLetter(state.applicationId);
+
+    const bits = [];
+    if (filled) bits.push("filled the cover-letter field");
+    if (uploaded) bits.push(`uploaded PDF to ${uploaded} input${uploaded === 1 ? "" : "s"}`);
+    if (copied) bits.push("copied to clipboard");
+    showStatus("ok", "Cover letter ready — " + (bits.join(", ") || "saved to dashboard") + ".");
+  }
+
+  function fillCoverLetterTextarea(text) {
+    if (!text) return 0;
+    const tas = Array.from(document.querySelectorAll("textarea")).filter(
+      (el) => isVisible(el) && !el.disabled && !el.readOnly && (!el.value || !el.value.trim())
+    );
+    let n = 0;
+    for (const el of tas) {
+      if (/cover.?letter|motivation|why.*(join|work|company)|message to.*(hiring|recruiter)/i.test(fieldKey(el))) {
+        setNativeValue(el, text);
+        glow(el);
+        n++;
+      }
+    }
+    return n;
+  }
+
+  async function uploadCoverLetter(appId) {
+    const fileInputs = Array.from(document.querySelectorAll("input[type=file]")).filter(isVisible);
+    if (!fileInputs.length) return 0;
+    const target = fileInputs.find((i) => /cover|letter/.test(fieldKey(i)));
+    if (!target) return 0; // don't clobber the resume slot
+    const blobResp = await send({ type: "coverLetterBlob", appId });
+    if (!blobResp?.ok) throw new Error(blobResp?.error ?? "couldn't fetch cover letter pdf");
+    const bytes = new Uint8Array(blobResp.bytes);
+    const file = new File([new Blob([bytes], { type: "application/pdf" })], "Varun_Chandwani_CoverLetter.pdf", {
+      type: "application/pdf",
+    });
+    try {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      target.files = dt.files;
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+      glow(target);
+      return 1;
+    } catch {
+      return 0;
+    }
+  }
+
+  async function copyToClipboard(text) {
+    if (!text) return false;
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        ta.remove();
+        return ok;
+      } catch {
+        return false;
+      }
+    }
+  }
+
   // Does the page have anything worth acting on?
   function hasActionableContent() {
     const fields = document.querySelectorAll(
@@ -566,6 +652,7 @@
       else if (act === "personalize") await onPersonalize();
       else if (act === "fill") await onFill();
       else if (act === "answer") await onAnswer();
+      else if (act === "cover") await onCoverLetter();
       else if (act === "resume") await onResume();
       else throw new Error(`unknown action: ${act}`);
       return { ok: true };

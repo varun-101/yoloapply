@@ -47,6 +47,7 @@ export const api = {
     request("/api/answer-question", { method: "POST", body: JSON.stringify(payload) }),
   autofillMap: (payload) =>
     request("/api/autofill-map", { method: "POST", body: JSON.stringify(payload) }),
+  coverLetter: (id) => request(`/api/applications/${id}/cover-letter`, { method: "POST" }),
   resumeInfo: () => request("/api/resume"),
 };
 
@@ -59,5 +60,14 @@ export async function fetchResumeBlob(appId) {
     : `${apiBase.replace(/\/$/, "")}/api/resume/file`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
   if (!res.ok) throw new Error(`${res.status} fetching resume`);
+  return await res.blob();
+}
+
+// Returns the cover-letter PDF as a Blob for a given application.
+export async function fetchCoverLetterBlob(appId) {
+  const { apiBase, apiKey } = await getSettings();
+  const url = `${apiBase.replace(/\/$/, "")}/api/applications/${appId}/cover-letter?format=pdf`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
+  if (!res.ok) throw new Error(`${res.status} fetching cover letter`);
   return await res.blob();
 }
