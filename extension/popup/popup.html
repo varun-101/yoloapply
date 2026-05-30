@@ -28,6 +28,20 @@
 
   <div class="status hidden" data-role="status"></div>
 
+  <section class="qa">
+    <div class="qa-head">
+      <h3>Answer a question</h3>
+      <button class="link" data-act="qa-clear" title="Clear history">clear all</button>
+    </div>
+    <textarea data-role="qa-input" rows="3" placeholder="Paste an open-ended application question here…"></textarea>
+    <label class="qa-ctx">
+      <input type="checkbox" data-role="qa-usepage" checked />
+      <span>Use the current tab as job context</span>
+    </label>
+    <button class="primary" data-act="qa-generate">Generate answer</button>
+    <ul class="qa-list" data-role="qa-list"></ul>
+  </section>
+
   <section class="recent">
     <h3>Recent applications</h3>
     <ul data-role="apps"><li class="muted">Loading…</li></ul>

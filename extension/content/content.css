@@ -1,15 +1,15 @@
-/* YOLOapply in-page widget */
+/* ===== YOLOapply in-page widget — Warm Sunset theme (Expressive) ===== */
 #yoloapply-widget {
   position: fixed;
   bottom: 20px;
   right: 20px;
   width: 320px;
   z-index: 2147483647;
-  background: #ffffff;
-  color: #0f172a;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.15), 0 1px 3px rgba(15, 23, 42, 0.05);
+  background: #FFF8F0;
+  color: #3B2A22;
+  border: 1px solid #F0E0CE;
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(214, 120, 70, 0.22), 0 2px 6px rgba(59, 42, 34, 0.08);
   font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   overflow: hidden;
   transition: transform 0.18s ease, opacity 0.18s ease;
@@ -20,29 +20,45 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 12px;
-  background: #0f172a;
+  padding: 11px 13px;
+  background: linear-gradient(135deg, #FF6B4A 0%, #F5A623 100%);
   color: #fff;
 }
-#yoloapply-widget .yolo-head strong { font-weight: 600; letter-spacing: 0.02em; }
+#yoloapply-widget .yolo-head strong { font-weight: 700; letter-spacing: 0.02em; }
 #yoloapply-widget .yolo-head .yolo-close {
-  background: transparent; color: #fff; border: 0; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 6px; border-radius: 4px;
+  background: rgba(255, 255, 255, 0.18); color: #fff; border: 0; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 8px; border-radius: 6px;
 }
-#yoloapply-widget .yolo-head .yolo-close:hover { background: rgba(255, 255, 255, 0.12); }
-#yoloapply-widget .yolo-body { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-#yoloapply-widget .yolo-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #475569; }
-#yoloapply-widget .yolo-row .yolo-dot { width: 8px; height: 8px; border-radius: 99px; background: #94a3b8; }
-#yoloapply-widget .yolo-row.yolo-job .yolo-dot { background: #6366f1; }
-#yoloapply-widget .yolo-row.yolo-form .yolo-dot { background: #10b981; }
+#yoloapply-widget .yolo-head .yolo-close:hover { background: rgba(255, 255, 255, 0.34); }
+#yoloapply-widget .yolo-body { padding: 13px; display: flex; flex-direction: column; gap: 8px; }
+#yoloapply-widget .yolo-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9C8678; }
+#yoloapply-widget .yolo-row .yolo-dot { width: 8px; height: 8px; border-radius: 99px; background: #D9C3B0; }
+#yoloapply-widget .yolo-row.yolo-job .yolo-dot { background: #FF6B4A; }
+#yoloapply-widget .yolo-row.yolo-form .yolo-dot { background: #2E9E7B; }
 #yoloapply-widget button.yolo-btn {
-  background: #0f172a; color: #fff; border: 0; border-radius: 8px; padding: 8px 12px; font-size: 13px; cursor: pointer;
+  background: linear-gradient(135deg, #FF6B4A 0%, #F5A623 100%); color: #fff; border: 0; border-radius: 9px; padding: 9px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  box-shadow: 0 2px 8px rgba(255, 107, 74, 0.3); transition: box-shadow 0.15s ease, transform 0.08s ease, background 0.15s ease;
 }
-#yoloapply-widget button.yolo-btn:disabled { opacity: 0.5; cursor: progress; }
-#yoloapply-widget button.yolo-btn.yolo-secondary { background: #f1f5f9; color: #0f172a; }
-#yoloapply-widget .yolo-status { font-size: 12px; padding: 8px; border-radius: 8px; }
-#yoloapply-widget .yolo-status.yolo-ok { background: #ecfdf5; color: #047857; }
-#yoloapply-widget .yolo-status.yolo-err { background: #fef2f2; color: #b91c1c; }
-#yoloapply-widget .yolo-status.yolo-info { background: #eef2ff; color: #4338ca; }
-#yoloapply-widget .yolo-small { font-size: 11px; color: #64748b; }
-.yolo-fill-glow { transition: box-shadow 0.6s ease, background-color 0.6s ease; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.35) !important; }
+#yoloapply-widget button.yolo-btn:hover { box-shadow: 0 0 0 3px rgba(255, 107, 74, 0.22), 0 4px 12px rgba(255, 107, 74, 0.35); transform: translateY(-1px); }
+#yoloapply-widget button.yolo-btn:disabled { opacity: 0.5; cursor: progress; transform: none; box-shadow: none; }
+#yoloapply-widget button.yolo-btn.yolo-secondary {
+  background: #FFFFFF; color: #3B2A22; border: 1px solid #E7CBA9; box-shadow: none;
+}
+#yoloapply-widget button.yolo-btn.yolo-secondary:hover { background: linear-gradient(135deg, #FFEDE3 0%, #FFF3D9 100%); border-color: #FF6B4A; }
+#yoloapply-widget .yolo-status { font-size: 12px; padding: 8px; border-radius: 8px; border: 1px solid transparent; }
+#yoloapply-widget .yolo-status.yolo-ok { background: #E7F6EF; color: #1C7A5B; border-color: #BFE6D6; }
+#yoloapply-widget .yolo-status.yolo-err { background: #FCEBE7; color: #B83A22; border-color: #F6CFC4; }
+#yoloapply-widget .yolo-status.yolo-info { background: linear-gradient(135deg, #FFEDE3 0%, #FFF3D9 100%); color: #E8542F; border-color: #F8D9B8; }
+#yoloapply-widget .yolo-small { font-size: 11px; color: #9C8678; }
+.yolo-fill-glow { transition: box-shadow 0.6s ease, background-color 0.6s ease; box-shadow: 0 0 0 3px rgba(255, 107, 74, 0.4) !important; }
+
+/* Themed scrollbars — scoped to the widget so the host page is untouched. */
+#yoloapply-widget { scrollbar-width: thin; scrollbar-color: #FF6B4A #FFF3E8; }
+#yoloapply-widget *::-webkit-scrollbar { width: 9px; height: 9px; }
+#yoloapply-widget *::-webkit-scrollbar-track { background: #FFEEDF; border-radius: 99px; }
+#yoloapply-widget *::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #FF6B4A 0%, #F5A623 100%);
+  border-radius: 99px;
+  border: 2px solid #FFF8F0;
+}
+#yoloapply-widget *::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #E8542F 0%, #E0900F 100%); }

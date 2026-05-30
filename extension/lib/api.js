@@ -45,6 +45,8 @@ export const api = {
     }),
   answerQuestion: (payload) =>
     request("/api/answer-question", { method: "POST", body: JSON.stringify(payload) }),
+  autofillMap: (payload) =>
+    request("/api/autofill-map", { method: "POST", body: JSON.stringify(payload) }),
   resumeInfo: () => request("/api/resume"),
 };
 

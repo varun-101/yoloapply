@@ -1,7 +1,13 @@
 // Background service worker. Routes messages between the popup and content
 // script and brokers calls to the backend.
 import { api, fetchResumeBlob } from "./lib/api.js";
-import { getSettings, getTabState, setTabState } from "./lib/storage.js";
+import {
+  getSettings,
+  getTabState,
+  setTabState,
+  pushQaEntry,
+  updateQaEntry,
+} from "./lib/storage.js";
 
 chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === "install") {
@@ -55,6 +61,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case "answerQuestion": {
           const a = await api.answerQuestion(msg.payload);
           sendResponse({ ok: true, answer: a });
+          return;
+        }
+        case "autofillMap": {
+          const m = await api.autofillMap(msg.payload);
+          sendResponse({ ok: true, fields: m.fields ?? [] });
+          return;
+        }
+        case "qaGenerate": {
+          // Persisted, popup-independent generation. Create a pending entry,
+          // respond immediately with its id, then resolve in the background so
+          // the result survives the popup closing.
+          const { question, jobDescription, company, role } = msg.payload ?? {};
+          const id = await pushQaEntry({ question, company: company ?? "" });
+          sendResponse({ ok: true, id });
+          // Fire-and-forget; storage.onChanged drives the popup UI.
+          (async () => {
+            try {
+              const a = await api.answerQuestion({ question, jobDescription, company, role });
+              await updateQaEntry(id, {
+                status: "done",
+                answer: a.answer ?? "",
+                confidence: a.confidence ?? "",
+                note: a.note ?? "",
+              });
+            } catch (err) {
+              await updateQaEntry(id, { status: "error", error: err?.message ?? String(err) });
+            }
+          })();
           return;
         }
         case "resumeBlob": {

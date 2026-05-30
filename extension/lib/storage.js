@@ -35,3 +35,42 @@ export async function clearTabState(tabId) {
   const key = `tab:${tabId}`;
   return new Promise((resolve) => chrome.storage.session.remove(key, resolve));
 }
+
+// ---- Q&A history (persists across popup open/close in chrome.storage.local) ----
+const QA_KEY = "qaHistory";
+const QA_MAX = 50;
+
+export async function getQaHistory() {
+  return new Promise((resolve) =>
+    chrome.storage.local.get({ [QA_KEY]: [] }, (items) => resolve(items[QA_KEY] ?? []))
+  );
+}
+
+async function setQaHistory(list) {
+  return new Promise((resolve) => chrome.storage.local.set({ [QA_KEY]: list.slice(0, QA_MAX) }, resolve));
+}
+
+// Insert a new pending entry at the front. Returns the entry id.
+export async function pushQaEntry(entry) {
+  const list = await getQaHistory();
+  const id = `qa_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const full = { id, status: "pending", createdAt: Date.now(), ...entry };
+  await setQaHistory([full, ...list]);
+  return id;
+}
+
+// Merge a patch into an existing entry by id.
+export async function updateQaEntry(id, patch) {
+  const list = await getQaHistory();
+  const next = list.map((e) => (e.id === id ? { ...e, ...patch } : e));
+  await setQaHistory(next);
+}
+
+export async function deleteQaEntry(id) {
+  const list = await getQaHistory();
+  await setQaHistory(list.filter((e) => e.id !== id));
+}
+
+export async function clearQaHistory() {
+  await setQaHistory([]);
+}

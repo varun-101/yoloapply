@@ -1,7 +1,7 @@
 // Popup script — uses chrome.runtime to talk to background, and
 // chrome.scripting/messaging to drive the active tab's content script.
 
-import { getSettings } from "../lib/storage.js";
+import { getSettings, getQaHistory, deleteQaEntry, clearQaHistory } from "../lib/storage.js";
 
 const $ = (sel) => document.querySelector(sel);
 const conn = $('[data-role="conn"]');
@@ -28,18 +28,59 @@ async function tellContent(msg) {
   return new Promise((resolve) => chrome.tabs.sendMessage(tab.id, msg, (r) => resolve(r ?? null)));
 }
 
-// Triggers the content-script button by id.
+// Best-effort: grab the active tab's visible text + a company/role guess to use
+// as job context for a pasted question. Returns {} on pages we can't script.
+async function grabPageContext() {
+  const tab = await activeTab();
+  if (!tab?.id || /^(chrome|edge|about|chrome-extension):/i.test(tab.url ?? "")) return {};
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const clone = document.body?.cloneNode(true);
+        if (clone) clone.querySelectorAll("script,style,nav,header,footer,noscript").forEach((n) => n.remove());
+        const text = (clone?.innerText || "").replace(/\s+/g, " ").trim().slice(0, 8000);
+        const og = document.querySelector('meta[property="og:site_name"]')?.content;
+        const company = (og || (document.title || "").split(/[|\-–—:]/)[0]).trim();
+        return { text, company: company.length > 1 && company.length < 60 ? company : "" };
+      },
+    });
+    return res?.result ?? {};
+  } catch {
+    return {};
+  }
+}
+
+// Sends a runAction message to the content script. If the content script
+// isn't loaded on this tab (some pages block document_idle injection, or the
+// extension was just reloaded), inject it on demand, then retry.
 async function triggerContentButton(act) {
   const tab = await activeTab();
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: (action) => {
-      const btn = document.querySelector(`#yoloapply-widget [data-act="${action}"]`);
-      if (btn) btn.click();
-      else alert("Open a job application or job posting first, then try again.");
-    },
-    args: [act],
-  });
+  if (!tab?.id || /^(chrome|edge|about|chrome-extension):/i.test(tab.url ?? "")) {
+    throw new Error("This page can't be scripted. Open a real job/application page.");
+  }
+
+  const sendOnce = () =>
+    new Promise((resolve) => {
+      chrome.tabs.sendMessage(tab.id, { type: "runAction", act }, (resp) => {
+        if (chrome.runtime.lastError) resolve({ __noReceiver: true, error: chrome.runtime.lastError.message });
+        else resolve(resp ?? { ok: false, error: "no response" });
+      });
+    });
+
+  let resp = await sendOnce();
+  if (resp?.__noReceiver) {
+    // Content script not present — inject it, then retry once.
+    try {
+      await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ["content/content.css"] });
+    } catch {}
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/content.js"] });
+    await new Promise((r) => setTimeout(r, 300));
+    resp = await sendOnce();
+    if (resp?.__noReceiver) throw new Error("Couldn't load the helper on this page.");
+  }
+  if (resp && resp.ok === false && resp.error) throw new Error(resp.error);
+  return resp;
 }
 
 async function paintConnection() {
@@ -104,27 +145,149 @@ document.addEventListener("click", async (e) => {
     } else if (act === "save") {
       setStatus("info", "Saving the current job…");
       await triggerContentButton("save");
+      setStatus("ok", "Done — check the widget on the page.");
       setTimeout(() => paintApps(), 1200);
     } else if (act === "personalize") {
-      setStatus("info", "Personalizing resume (30-60s)…");
+      setStatus("info", "Personalizing resume (30-60s)… keep this open.");
       await triggerContentButton("personalize");
+      setStatus("ok", "Done — check the widget on the page.");
     } else if (act === "fill") {
       setStatus("info", "Filling fields…");
       await triggerContentButton("fill");
+      setStatus("ok", "Done — check the widget on the page.");
     } else if (act === "answer") {
-      setStatus("info", "Answering open-ended questions…");
+      setStatus("info", "Answering open-ended questions (slow)… keep this open.");
       await triggerContentButton("answer");
+      setStatus("ok", "Done — check the widget on the page.");
     } else if (act === "resume") {
       setStatus("info", "Uploading resume PDF…");
       await triggerContentButton("resume");
+      setStatus("ok", "Done — check the widget on the page.");
+    } else if (act === "qa-generate") {
+      await generateAnswer(e.target);
+    } else if (act === "qa-clear") {
+      await clearQaHistory();
+    } else if (act === "qa-copy") {
+      await copyText(e.target, e.target.dataset.text || "");
+    } else if (act === "qa-del") {
+      await deleteQaEntry(e.target.dataset.id);
     }
   } catch (err) {
     setStatus("err", err?.message ?? String(err));
   }
 });
 
+// ---- manual Q&A (persistent history) ----
+const qaInput = $('[data-role="qa-input"]');
+const qaList = $('[data-role="qa-list"]');
+const qaUsePage = $('[data-role="qa-usepage"]');
+
+function escapeHtmlText(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function renderQaList(list) {
+  if (!qaList) return;
+  if (!list.length) {
+    qaList.innerHTML = "";
+    return;
+  }
+  qaList.innerHTML = list
+    .map((e) => {
+      const q = escapeHtmlText(e.question);
+      let bodyHtml;
+      if (e.status === "pending") {
+        bodyHtml = `<div class="pending"><span class="spinner"></span> Generating…</div>`;
+      } else if (e.status === "error") {
+        bodyHtml = `<div class="err">${escapeHtmlText(e.error || "failed")}</div>`;
+      } else {
+        bodyHtml = `<div class="a readonly-box">${escapeHtmlText(e.answer)}</div>`;
+      }
+      const conf = e.status === "done" && e.confidence ? `confidence: ${escapeHtmlText(e.confidence)}` : "";
+      const note = e.status === "done" && e.note ? `<div class="note">${escapeHtmlText(e.note)}</div>` : "";
+      const copyBtn =
+        e.status === "done"
+          ? `<button data-act="qa-copy" data-text="${escapeHtmlText(e.answer)}">Copy</button>`
+          : "";
+      return `<li class="qa-item" data-id="${e.id}">
+        <div class="q">${q}</div>
+        ${bodyHtml}
+        ${note}
+        <div class="meta">
+          <span class="conf">${conf}</span>
+          <span class="btns">
+            ${copyBtn}
+            <button data-act="qa-del" data-id="${e.id}">Delete</button>
+          </span>
+        </div>
+      </li>`;
+    })
+    .join("");
+}
+
+async function paintQa() {
+  const list = await getQaHistory();
+  renderQaList(list);
+}
+
+async function generateAnswer(btn) {
+  const question = (qaInput?.value ?? "").trim();
+  if (!question) {
+    setStatus("err", "Paste a question first.");
+    return;
+  }
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = "Sending…";
+  setStatus("info", "Generating in the background — you can switch tabs.");
+  try {
+    let jobDescription;
+    let company;
+    if (qaUsePage?.checked) {
+      const ctx = await grabPageContext();
+      jobDescription = ctx.text || undefined;
+      company = ctx.company || undefined;
+    }
+    const r = await bg({ type: "qaGenerate", payload: { question, jobDescription, company } });
+    if (!r?.ok) throw new Error(r?.error ?? "failed");
+    qaInput.value = "";
+    // The pending entry is now in storage; storage.onChanged re-renders.
+    setStatus("ok", "Working… the answer will appear below when ready.");
+  } catch (err) {
+    setStatus("err", err?.message ?? String(err));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+async function copyText(btn, text) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+  const orig = btn.textContent;
+  btn.textContent = "Copied ✓";
+  setTimeout(() => (btn.textContent = orig), 1200);
+}
+
+// Live-update the history whenever the background writes to it.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.qaHistory) {
+    renderQaList(changes.qaHistory.newValue ?? []);
+  }
+});
+
 (async () => {
   await loadDashboardBase();
+  await paintQa();
   await paintConnection();
   await paintApps();
 })();

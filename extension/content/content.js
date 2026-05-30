@@ -99,7 +99,17 @@
     return cleanLabel(el.placeholder || el.name || el.id || "");
   }
   function fieldKey(el) {
-    return ((el.name || "") + " " + (el.id || "") + " " + labelFor(el)).toLowerCase();
+    // Includes the autocomplete attribute (Layer 0) so standard tokens like
+    // "given-name" / "family-name" / "email" / "tel" / "organization" match.
+    return (
+      (el.name || "") +
+      " " +
+      (el.id || "") +
+      " " +
+      (el.getAttribute("autocomplete") || "") +
+      " " +
+      labelFor(el)
+    ).toLowerCase();
   }
   function isVisible(el) {
     if (!el || !el.getBoundingClientRect) return false;
@@ -278,6 +288,63 @@
     return uploaded;
   }
 
+  // ---- Layer 2: collect remaining empty fields + apply the LLM mapping ----
+  function collectEmptyFields() {
+    const out = [];
+    let i = 0;
+    for (const el of fillableInputs()) {
+      const isSelect = el.tagName === "SELECT";
+      // Skip already-filled text fields and already-chosen selects.
+      if (!isSelect && el.value && el.value.trim()) continue;
+      if (isSelect && el.selectedIndex > 0 && el.value) continue;
+      const id = el.dataset.yoloId || `yf_${i++}_${Math.random().toString(36).slice(2, 6)}`;
+      el.dataset.yoloId = id;
+      out.push({
+        id,
+        label: labelFor(el),
+        name: el.name || "",
+        type: isSelect ? "select" : el.tagName === "TEXTAREA" ? "textarea" : el.type || "text",
+        placeholder: el.placeholder || "",
+        autocomplete: el.getAttribute("autocomplete") || "",
+        maxLength: el.maxLength > 0 ? el.maxLength : undefined,
+        options: isSelect
+          ? Array.from(el.options)
+              .map((o) => o.text.trim())
+              .filter((t) => t && !/^\s*(select|choose|please|--)/i.test(t))
+          : undefined,
+      });
+    }
+    return out;
+  }
+
+  function applyMapped(mapped) {
+    let filled = 0;
+    for (const m of mapped || []) {
+      if (!m || m.kind === "skip" || !m.value) continue;
+      let el;
+      try {
+        el = document.querySelector(`[data-yolo-id="${CSS.escape(m.id)}"]`);
+      } catch {
+        el = null;
+      }
+      if (!el) continue;
+      if (el.tagName === "SELECT") {
+        if (el.selectedIndex > 0 && el.value) continue;
+        if (selectByText(el, String(m.value))) {
+          glow(el);
+          filled++;
+        }
+      } else {
+        if (el.value && el.value.trim()) continue;
+        const max = el.maxLength > 0 ? el.maxLength : 100000;
+        setNativeValue(el, String(m.value).slice(0, max));
+        glow(el);
+        filled++;
+      }
+    }
+    return filled;
+  }
+
   // ---- the widget ----
   let widget;
   let statusEl;
@@ -341,10 +408,10 @@
     widget.querySelector(".yolo-ft").textContent = isForm ? "Application form detected" : "No application form detected";
     widget.querySelector(".yolo-job").style.opacity = isJob ? "1" : "0.55";
     widget.querySelector(".yolo-form").style.opacity = isForm ? "1" : "0.55";
-    widget.querySelector('[data-act="save"]').disabled = !isJob;
-    widget.querySelector('[data-act="fill"]').disabled = !isForm;
-    widget.querySelector('[data-act="answer"]').disabled = !isForm;
-    widget.querySelector('[data-act="resume"]').disabled = !isForm;
+    // Buttons are NOT hard-gated on detection — detection is often wrong on
+    // custom portals. The actions themselves report when nothing was found.
+    // Only "personalize" stays gated, since it needs a saved application.
+    widget.querySelector('[data-act="personalize"]').disabled = !state.applicationId;
   }
 
   // ---- actions ----
@@ -391,30 +458,69 @@
   }
 
   async function onFill() {
-    showStatus("info", "Filling basic fields from profile…");
+    // Layer 0/1 — instant, offline: autocomplete attr + regex heuristics.
+    showStatus("info", "Filling known fields…");
     const p = await send({ type: "profile" });
     if (!p?.ok) throw new Error(p?.error ?? "couldn't load profile");
-    const n = await fillBasicFields(p.profile);
-    if (n === 0) {
-      showStatus(
-        "err",
-        "No matching fields. Try 'Answer open-ended questions' for free-text fields, or check the console for the labels we saw."
-      );
+    const heur = await fillBasicFields(p.profile);
+
+    // Layer 2 — batch the still-empty fields to the LLM (handles any format,
+    // selects, and open-ended questions in one request).
+    const fields = collectEmptyFields();
+    let ai = 0;
+    if (fields.length) {
+      showStatus("info", `Filled ${heur} instantly. Asking the LLM to map ${fields.length} more…`);
+      const job = state.job || {};
+      const resp = await send({
+        type: "autofillMap",
+        payload: {
+          fields,
+          jobDescription: job.jdText || pageText().slice(0, 8000),
+          company: job.company || guessCompanyFromPage(),
+          role: job.role,
+          applicationId: state.applicationId,
+        },
+      });
+      if (!resp?.ok) throw new Error(resp?.error ?? "autofill mapping failed");
+      ai = applyMapped(resp.fields);
+    }
+
+    const total = heur + ai;
+    if (total === 0) {
+      showStatus("err", "Couldn't fill anything here. Check the console for the fields we saw.");
     } else {
-      showStatus("ok", `Filled ${n} field${n === 1 ? "" : "s"}.`);
+      showStatus("ok", `Filled ${total} field${total === 1 ? "" : "s"} (${heur} instant, ${ai} via LLM).`);
     }
   }
 
   async function onAnswer() {
     showStatus("info", "Answering open-ended questions with the LLM (slow)…");
     const job = state.job || {};
+    // If no job was saved/extracted, fall back to the visible page text so the
+    // LLM still has the role's context (the candidate "about me" context is
+    // always injected server-side from the profile + project bank).
+    const jdText = job.jdText || pageText().slice(0, 8000);
     const n = await answerOpenEndedQuestions({
-      jobDescription: job.jdText,
-      company: job.company,
+      jobDescription: jdText,
+      company: job.company || guessCompanyFromPage(),
       role: job.role,
       applicationId: state.applicationId,
     });
-    showStatus(n ? "ok" : "info", n ? `Answered ${n} question${n === 1 ? "" : "s"}.` : "No open-ended questions found.");
+    showStatus(
+      n ? "ok" : "info",
+      n
+        ? `Answered ${n} question${n === 1 ? "" : "s"}.`
+        : "No open-ended questions (textareas / long text fields) found on this page."
+    );
+  }
+
+  // Best-effort company guess from the page title / og:site_name when we haven't
+  // run a full extraction.
+  function guessCompanyFromPage() {
+    const og = document.querySelector('meta[property="og:site_name"]')?.content;
+    if (og) return og.trim();
+    const t = (document.title || "").split(/[|\-–—:]/)[0].trim();
+    return t.length > 1 && t.length < 60 ? t : undefined;
   }
 
   async function onResume() {
@@ -423,20 +529,66 @@
     showStatus(n ? "ok" : "err", n ? `Uploaded into ${n} input${n === 1 ? "" : "s"}.` : "Couldn't find a resume file input.");
   }
 
-  // ---- mount ----
-  async function mount() {
-    if (location.protocol === "chrome:" || location.protocol === "chrome-extension:") return;
-    // Read directly from chrome.storage.sync — avoids race with background service worker.
-    const settings = await new Promise((resolve) =>
-      chrome.storage.sync.get({ showWidget: true }, (items) => resolve(items))
-    );
-    if (settings.showWidget === false) return;
-    const isJob = looksLikeJobPosting();
-    const isForm = findApplicationForms().length > 0;
-    if (!isJob && !isForm) return;
-    ui();
-    setDetection({ isJob, isForm });
+  // Does the page have anything worth acting on?
+  function hasActionableContent() {
+    const fields = document.querySelectorAll(
+      "input:not([type=hidden]), textarea, select"
+    ).length;
+    return looksLikeJobPosting() || findApplicationForms().length > 0 || fields >= 2;
   }
+
+  // ---- mount ----
+  // forceShow=true bypasses both the showWidget setting and content detection —
+  // used when the user explicitly invokes an action from the popup.
+  async function mount(forceShow = false) {
+    if (location.protocol === "chrome:" || location.protocol === "chrome-extension:") return false;
+    if (!forceShow) {
+      const settings = await new Promise((resolve) =>
+        chrome.storage.sync.get({ showWidget: true }, (items) => resolve(items))
+      );
+      if (settings.showWidget === false) return false;
+      if (!hasActionableContent()) return false;
+    }
+    ui();
+    if (widget.classList.contains("yolo-hidden")) widget.classList.remove("yolo-hidden");
+    setDetection({ isJob: looksLikeJobPosting(), isForm: findApplicationForms().length > 0 });
+    return true;
+  }
+
+  // Run an action by name, ensuring the widget exists first so status is visible.
+  // This is the entry point the popup uses — it does NOT depend on detection.
+  async function runAction(act) {
+    await mount(true);
+    const btn = widget?.querySelector(`[data-act="${act}"]`);
+    if (btn) btn.disabled = true;
+    try {
+      if (act === "save") await onSave();
+      else if (act === "personalize") await onPersonalize();
+      else if (act === "fill") await onFill();
+      else if (act === "answer") await onAnswer();
+      else if (act === "resume") await onResume();
+      else throw new Error(`unknown action: ${act}`);
+      return { ok: true };
+    } catch (err) {
+      showStatus("err", err?.message ?? String(err));
+      return { ok: false, error: err?.message ?? String(err) };
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  // Listen for direct action requests from the popup/background.
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type === "runAction" && msg.act) {
+      runAction(msg.act).then(sendResponse);
+      return true; // async response
+    }
+    if (msg?.type === "showWidget") {
+      mount(true).then((shown) => sendResponse({ ok: shown }));
+      return true;
+    }
+    return false;
+  });
 
   // Re-evaluate on SPA navigations.
   let lastUrl = location.href;
