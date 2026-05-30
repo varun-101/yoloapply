@@ -14,6 +14,7 @@ async function load() {
   document.querySelector('[data-field="apiBase"]').value = s.apiBase ?? DEFAULTS.apiBase;
   document.querySelector('[data-field="apiKey"]').value = s.apiKey ?? "";
   document.querySelector('[data-field="autoDetectJob"]').checked = s.autoDetectJob !== false;
+  document.querySelector('[data-field="showWidget"]').checked = s.showWidget !== false;
 }
 
 async function collect() {
@@ -21,6 +22,7 @@ async function collect() {
     apiBase: document.querySelector('[data-field="apiBase"]').value.trim() || DEFAULTS.apiBase,
     apiKey: document.querySelector('[data-field="apiKey"]').value.trim(),
     autoDetectJob: document.querySelector('[data-field="autoDetectJob"]').checked,
+    showWidget: document.querySelector('[data-field="showWidget"]').checked,
   };
 }
 

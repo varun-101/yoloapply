@@ -424,8 +424,13 @@
   }
 
   // ---- mount ----
-  function mount() {
+  async function mount() {
     if (location.protocol === "chrome:" || location.protocol === "chrome-extension:") return;
+    // Read directly from chrome.storage.sync — avoids race with background service worker.
+    const settings = await new Promise((resolve) =>
+      chrome.storage.sync.get({ showWidget: true }, (items) => resolve(items))
+    );
+    if (settings.showWidget === false) return;
     const isJob = looksLikeJobPosting();
     const isForm = findApplicationForms().length > 0;
     if (!isJob && !isForm) return;
@@ -442,6 +447,19 @@
     }
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
+
+  // React to setting changes in real-time (no refresh needed).
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.showWidget) {
+      if (changes.showWidget.newValue === false && widget) {
+        widget.remove();
+        widget = null;
+        statusEl = null;
+      } else if (changes.showWidget.newValue !== false && !widget) {
+        setTimeout(mount, 200);
+      }
+    }
+  });
 
   // Initial mount after page settle.
   setTimeout(mount, 400);

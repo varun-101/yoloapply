@@ -4,6 +4,7 @@ export const DEFAULTS = Object.freeze({
   apiBase: "http://localhost:3001",
   apiKey: "",
   autoDetectJob: true,
+  showWidget: true,
 });
 
 export async function getSettings() {
