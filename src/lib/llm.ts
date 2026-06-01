@@ -19,6 +19,23 @@ export function llm(): OpenAI {
 
 export const LLM_MODEL = process.env.DEEPSEEK_MODEL ?? "deepseek-chat";
 
+// Strip the most obvious "written by an LLM" punctuation tell — em/en dashes —
+// and tidy the spacing left behind. Em dashes become a comma; spaced en dashes
+// used as separators become commas (numeric ranges like 2024–2026 are left alone).
+// Used on any free-text the model generates that a human will read/paste.
+export function deAi(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/\s+—\s+/g, ", ")
+    .replace(/—/g, ", ")
+    .replace(/\s+–\s+/g, ", ")
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*,/g, ",")
+    .replace(/,\s*\./g, ".")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 export function parseJsonFromText<T = unknown>(text: string): T {
   let t = text.trim();
   if (t.startsWith("```")) {

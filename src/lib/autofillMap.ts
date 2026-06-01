@@ -1,4 +1,4 @@
-import { chatJson } from "./llm";
+import { chatJson, deAi } from "./llm";
 import { owner } from "./owner";
 import { PROJECT_BANK } from "./projects";
 
@@ -145,6 +145,10 @@ Return the JSON mapping with one entry per field id. Remember: selects must use 
       if (real) return { ...f, value: real };
       // Unknown/missing key — don't trust the model's free-text value.
       return { ...f, kind: "skip", value: "" };
+    }
+    // Strip em dashes from generated free-text so it doesn't read as AI-written.
+    if (f.kind === "generated" && f.value) {
+      return { ...f, value: deAi(f.value) };
     }
     return f;
   });

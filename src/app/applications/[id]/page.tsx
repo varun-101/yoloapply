@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { formatDate, statusColor } from "@/lib/utils";
 import { Download, ExternalLink, FileText, Mail, FileSignature } from "lucide-react";
 import ApplicationActions from "./actions";
+import QuestionAnswerer from "./question-answerer";
 
 export const dynamic = "force-dynamic";
 
@@ -117,6 +118,8 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
               </CardContent>
             </Card>
           )}
+
+          <QuestionAnswerer applicationId={app.id} />
 
           <Card>
             <CardHeader>

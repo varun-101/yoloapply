@@ -1,4 +1,4 @@
-import { chatJson } from "./llm";
+import { chatJson, deAi } from "./llm";
 import { owner } from "./owner";
 import { PROJECT_BANK } from "./projects";
 
@@ -72,26 +72,6 @@ Write the cover letter per the schema. Pick the proof points that best match THI
   };
 }
 
-// Strip the most obvious "written by an LLM" punctuation tell — em/en dashes —
-// and tidy the spacing left behind. Em dashes become a comma or period depending
-// on context; spaced en dashes used as separators become commas (numeric ranges
-// like 2024–2026 are left alone).
-export function deAi(text: string): string {
-  if (!text) return text;
-  return text
-    // " word — word " (spaced em dash joining clauses) -> ", "
-    .replace(/\s+—\s+/g, ", ")
-    // "word—word" (unspaced em dash) -> ", "
-    .replace(/—/g, ", ")
-    // spaced en dash used as a separator -> ", " (ranges have no surrounding spaces)
-    .replace(/\s+–\s+/g, ", ")
-    // tidy: collapse accidental double punctuation / spaces
-    .replace(/\s+,/g, ",")
-    .replace(/,\s*,/g, ",")
-    .replace(/,\s*\./g, ".")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
 
 // Render the structured draft to a plain-text cover letter (for copy/paste + email).
 export function coverLetterToText(draft: CoverLetterDraft): string {

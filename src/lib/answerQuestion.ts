@@ -1,4 +1,4 @@
-import { chatJson } from "./llm";
+import { chatJson, deAi } from "./llm";
 import { owner } from "./owner";
 import { PROJECT_BANK } from "./projects";
 
@@ -67,10 +67,11 @@ ${input.maxChars ? `\nMax length: ${input.maxChars} characters.` : ""}
 # TASK
 Produce the JSON-format answer per the schema. If the question is a yes/no or a single-word answer, keep it to that. If it's open-ended, write naturally — short, direct, specific.`;
 
-  return await chatJson<AnsweredQuestion>({
+  const out = await chatJson<AnsweredQuestion>({
     system: SYSTEM,
     user: userPrompt,
     maxTokens: 6144,
     temperature: 0.5,
   });
+  return { ...out, answer: deAi(out.answer ?? "") };
 }
