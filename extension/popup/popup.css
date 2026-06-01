@@ -40,14 +40,38 @@ header {
 }
 header strong { font-weight: 700; letter-spacing: 0.01em; }
 header small { color: rgba(255, 255, 255, 0.82); display: block; font-size: 11px; }
+.head-right { display: flex; align-items: center; gap: 4px; }
 button.icon { background: rgba(255, 255, 255, 0.16); color: #fff; border: 0; font-size: 15px; cursor: pointer; padding: 6px 8px; border-radius: 8px; }
 button.icon:hover { background: rgba(255, 255, 255, 0.3); }
+button.icon.active { background: rgba(255, 255, 255, 0.85); color: var(--coral-deep); }
+
+/* keyboard hint badges — hidden unless body.show-shortcuts */
+kbd {
+  font: 600 10px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--coral-deep);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 2px 5px;
+  margin-left: auto;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.08);
+}
+.actions button { position: relative; }
+.actions button.primary kbd { background: rgba(255,255,255,0.9); border-color: transparent; }
+.actions button.link kbd { margin-left: 6px; }
+.qa .primary kbd { background: rgba(255,255,255,0.9); border-color: transparent; color: var(--coral-deep); margin-left: 8px; }
+body:not(.show-shortcuts) kbd { display: none; }
+.shortcut-hint { display: none; padding: 8px 14px 14px; font-size: 11px; color: var(--muted); }
+body.show-shortcuts .shortcut-hint { display: block; }
+.shortcut-hint kbd { display: inline-block; margin: 0 2px; }
 
 .actions { display: flex; flex-direction: column; gap: 7px; padding: 14px; border-bottom: 1px solid var(--border); }
 .actions button {
   border: 0; border-radius: 10px; padding: 9px 12px; font-size: 13px; cursor: pointer; text-align: left;
+  display: flex; align-items: center; gap: 8px;
   transition: transform 0.08s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
+.actions button.link { justify-content: flex-start; }
 .actions button.primary { background: var(--grad); color: #fff; font-weight: 600; box-shadow: 0 2px 8px rgba(255, 107, 74, 0.3); }
 .actions button.primary:hover { box-shadow: var(--glow), 0 4px 12px rgba(255, 107, 74, 0.35); transform: translateY(-1px); }
 .actions button.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); }

@@ -5,6 +5,7 @@ export const DEFAULTS = Object.freeze({
   apiKey: "",
   autoDetectJob: true,
   showWidget: true,
+  showShortcuts: true,
 });
 
 export async function getSettings() {
@@ -73,4 +74,45 @@ export async function deleteQaEntry(id) {
 
 export async function clearQaHistory() {
   await setQaHistory([]);
+}
+
+// ---- saved-job cache (survives page refresh / browser restart) ----
+// Maps a normalized page URL -> { applicationId, company, role, job, savedAt }.
+const SAVED_KEY = "savedJobs";
+const SAVED_MAX = 200;
+
+export function normalizeJobUrl(url) {
+  try {
+    const u = new URL(url);
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+export async function getSavedJob(url) {
+  const key = normalizeJobUrl(url);
+  return new Promise((resolve) =>
+    chrome.storage.local.get({ [SAVED_KEY]: {} }, (items) => resolve(items[SAVED_KEY]?.[key] ?? null))
+  );
+}
+
+export async function setSavedJob(url, data) {
+  const key = normalizeJobUrl(url);
+  return new Promise((resolve) =>
+    chrome.storage.local.get({ [SAVED_KEY]: {} }, (items) => {
+      const map = items[SAVED_KEY] ?? {};
+      map[key] = { ...data, savedAt: Date.now() };
+      // Prune oldest entries if the map grows too large.
+      const keys = Object.keys(map);
+      if (keys.length > SAVED_MAX) {
+        keys
+          .sort((a, b) => (map[a].savedAt ?? 0) - (map[b].savedAt ?? 0))
+          .slice(0, keys.length - SAVED_MAX)
+          .forEach((k) => delete map[k]);
+      }
+      chrome.storage.local.set({ [SAVED_KEY]: map }, resolve);
+    })
+  );
 }

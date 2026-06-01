@@ -7,6 +7,7 @@ import {
   setTabState,
   pushQaEntry,
   updateQaEntry,
+  setSavedJob,
 } from "./lib/storage.js";
 
 chrome.runtime.onInstalled.addListener(({ reason }) => {
@@ -36,6 +37,48 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const job = await api.extractFromDom(msg.text, msg.url);
           if (tabId) await setTabState(tabId, { job, url: msg.url });
           sendResponse({ ok: true, job });
+          return;
+        }
+        case "saveJob": {
+          // Async, popup/content-independent: record a "saving" marker, respond
+          // immediately, then extract + create the application in the background.
+          // The result is persisted to chrome.storage.local (savedJobs[url]), and
+          // the content script / popup reflect it via storage.onChanged — so it
+          // survives the user switching tabs or navigating away mid-save.
+          const { text, url } = msg;
+          await setSavedJob(url, { status: "saving", startedAt: Date.now() });
+          sendResponse({ ok: true, queued: true });
+          (async () => {
+            try {
+              const job = await api.extractFromDom(text, url);
+              if (!job.company || !job.role) {
+                await setSavedJob(url, {
+                  status: "error",
+                  error: "Couldn't extract a company and role from this page.",
+                });
+                return;
+              }
+              const created = await api.createApplication({
+                company: job.company,
+                role: job.role,
+                location: job.location,
+                source: job.source ?? "portal",
+                jdUrl: url,
+                jdText: job.jdText,
+                applyUrl: job.applyUrl || url,
+                personalize: false,
+              });
+              await setSavedJob(url, {
+                status: "saved",
+                applicationId: created.id,
+                company: job.company,
+                role: job.role,
+                job,
+              });
+            } catch (e) {
+              await setSavedJob(url, { status: "error", error: e?.message ?? String(e) });
+            }
+          })();
           return;
         }
         case "createApplication": {

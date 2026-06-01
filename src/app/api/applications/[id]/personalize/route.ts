@@ -3,6 +3,12 @@ import { prisma } from "@/lib/db";
 import { personalizeOnePage } from "@/lib/onePage";
 import { saveResumeArtifacts } from "@/lib/compile";
 
+export const maxDuration = 300;
+
+// Consider a "running" marker stale after this long (covers a server crash
+// mid-run that would otherwise leave the app stuck in a loading state).
+const STALE_MS = 5 * 60 * 1000;
+
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
   const app = await prisma.application.findUnique({ where: { id: params.id } });
   if (!app) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -13,6 +19,20 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     );
   }
 
+  // If a personalize is already running and isn't stale, don't start a second one.
+  if (app.personalizeStatus === "running" && Date.now() - app.updatedAt.getTime() < STALE_MS) {
+    return NextResponse.json({ ok: true, status: "running", alreadyRunning: true });
+  }
+
+  // Mark running BEFORE the long await, in its own committed write, so a page
+  // refresh (or any concurrent GET) sees the in-progress state. Node runs this
+  // handler to completion even if the original client navigates away, so the DB
+  // is updated regardless — the refreshed page polls and picks up the result.
+  await prisma.application.update({
+    where: { id: app.id },
+    data: { personalizeStatus: "running" },
+  });
+
   try {
     const result = await personalizeOnePage({
       company: app.company,
@@ -22,7 +42,12 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     const { texPath, pdfPath } = await saveResumeArtifacts(app.id, result.tex, result.pdf);
     const updated = await prisma.application.update({
       where: { id: app.id },
-      data: { status: "personalized", resumeTexPath: texPath, resumePdfPath: pdfPath },
+      data: {
+        status: "personalized",
+        resumeTexPath: texPath,
+        resumePdfPath: pdfPath,
+        personalizeStatus: null,
+      },
     });
     const detail = result.clippedFromMultiPage
       ? `Re-personalized at tightness ${result.tightness} — overflowed to ${result.pages} pages, clipped to first page.`
@@ -33,6 +58,10 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ ok: true, application: updated });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
+    await prisma.application.update({
+      where: { id: app.id },
+      data: { personalizeStatus: "failed" },
+    });
     await prisma.event.create({
       data: { applicationId: app.id, type: "note", detail: "Personalization failed: " + msg.slice(0, 500) },
     });

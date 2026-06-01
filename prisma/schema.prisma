@@ -18,6 +18,7 @@ model Application {
   status        String   @default("draft") // draft | personalized | applied | replied | interview | offer | rejected | closed
   resumeTexPath String?
   resumePdfPath String?
+  personalizeStatus String?  // null | "running" | "failed" — drives a persistent loading state
   coverLetterText String?
   coverLetterPdfPath String?
   applyUrl      String?

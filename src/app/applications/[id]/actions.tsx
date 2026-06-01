@@ -1,5 +1,5 @@
 "use client";
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ export default function ApplicationActions(props: {
   hasJd: boolean;
   hasPdf: boolean;
   hasCoverLetter: boolean;
+  personalizeStatus: string | null;
   applyUrl: string | null;
 }) {
   const router = useRouter();
@@ -22,16 +23,32 @@ export default function ApplicationActions(props: {
   const [err, setErr] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
+  // A personalize can be running server-side independent of this tab (e.g. you
+  // refreshed mid-run). While the server reports "running", poll so the loading
+  // state is persistent and resolves on its own when the job finishes.
+  const isPersonalizing = busy === "personalize" || props.personalizeStatus === "running";
+  useEffect(() => {
+    if (props.personalizeStatus !== "running") return;
+    const t = setInterval(() => startTransition(() => router.refresh()), 3000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.personalizeStatus]);
+
   async function personalize() {
     setBusy("personalize");
     setErr(null);
+    // Reflect "running" immediately so a refresh during the request shows it.
+    startTransition(() => router.refresh());
     try {
       const res = await fetch(`/api/applications/${props.id}/personalize`, { method: "POST" });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? "Failed");
       startTransition(() => router.refresh());
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : String(e));
+      // A navigation/refresh aborts this fetch, but the server job keeps running
+      // and the poll above will pick up the result — so ignore abort errors.
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/abort/i.test(msg)) setErr(msg);
     } finally {
       setBusy(null);
     }
@@ -88,9 +105,13 @@ export default function ApplicationActions(props: {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={personalize} disabled={!props.hasJd || busy !== null}>
-            {busy === "personalize" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-            {props.hasPdf ? "Re-personalize resume" : "Personalize resume"}
+          <Button onClick={personalize} disabled={!props.hasJd || busy !== null || isPersonalizing}>
+            {isPersonalizing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+            {isPersonalizing
+              ? "Personalizing…"
+              : props.hasPdf
+              ? "Re-personalize resume"
+              : "Personalize resume"}
           </Button>
           <Button onClick={coverLetter} disabled={busy !== null} variant="outline">
             {busy === "cover" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSignature className="h-4 w-4" />}
@@ -110,6 +131,17 @@ export default function ApplicationActions(props: {
 
         {err && (
           <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>
+        )}
+        {props.personalizeStatus === "running" && (
+          <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" /> Personalizing resume in the background… this keeps running even
+            if you refresh or close this tab.
+          </div>
+        )}
+        {props.personalizeStatus === "failed" && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            The last personalize attempt failed. Click “Re-personalize resume” to try again.
+          </div>
         )}
 
         <div className="flex items-center gap-2 text-sm pt-2">

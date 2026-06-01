@@ -14,17 +14,20 @@
         <small data-role="conn">checking…</small>
       </div>
     </div>
-    <button class="icon" data-act="settings" title="Settings">⚙</button>
+    <div class="head-right">
+      <button class="icon" data-act="toggle-shortcuts" title="Toggle keyboard shortcuts (?)">⌨</button>
+      <button class="icon" data-act="settings" title="Settings">⚙</button>
+    </div>
   </header>
 
   <section class="actions">
-    <button class="primary" data-act="save">Save current job</button>
-    <button class="secondary" data-act="fill">Auto-fill form</button>
-    <button class="secondary" data-act="answer">Answer open-ended Qs</button>
-    <button class="secondary" data-act="cover">Cover letter</button>
-    <button class="secondary" data-act="resume">Upload resume</button>
-    <button class="secondary" data-act="personalize" disabled>Personalize resume</button>
-    <button class="link" data-act="dashboard">Open dashboard ↗</button>
+    <button class="primary" data-act="save" data-key="s">Save current job <kbd>S</kbd></button>
+    <button class="secondary" data-act="fill" data-key="f">Auto-fill form <kbd>F</kbd></button>
+    <button class="secondary" data-act="answer" data-key="a">Answer open-ended Qs <kbd>A</kbd></button>
+    <button class="secondary" data-act="cover" data-key="c">Cover letter <kbd>C</kbd></button>
+    <button class="secondary" data-act="resume" data-key="r">Upload resume <kbd>R</kbd></button>
+    <button class="secondary" data-act="personalize" data-key="p">Personalize resume <kbd>P</kbd></button>
+    <button class="link" data-act="dashboard" data-key="d">Open dashboard ↗ <kbd>D</kbd></button>
   </section>
 
   <div class="status hidden" data-role="status"></div>
@@ -39,9 +42,13 @@
       <input type="checkbox" data-role="qa-usepage" checked />
       <span>Use the current tab as job context</span>
     </label>
-    <button class="primary" data-act="qa-generate">Generate answer</button>
+    <button class="primary" data-act="qa-generate">Generate answer <kbd>Ctrl ↵</kbd></button>
     <ul class="qa-list" data-role="qa-list"></ul>
   </section>
+
+  <div class="shortcut-hint" data-role="shortcut-hint">
+    Press a highlighted key to run an action. <kbd>?</kbd> toggles these hints.
+  </div>
 
   <section class="recent">
     <h3>Recent applications</h3>

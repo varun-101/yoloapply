@@ -1,7 +1,7 @@
 // Popup script — uses chrome.runtime to talk to background, and
 // chrome.scripting/messaging to drive the active tab's content script.
 
-import { getSettings, getQaHistory, deleteQaEntry, clearQaHistory } from "../lib/storage.js";
+import { getSettings, saveSettings, getQaHistory, deleteQaEntry, clearQaHistory } from "../lib/storage.js";
 
 const $ = (sel) => document.querySelector(sel);
 const conn = $('[data-role="conn"]');
@@ -175,9 +175,60 @@ document.addEventListener("click", async (e) => {
       await copyText(e.target, e.target.dataset.text || "");
     } else if (act === "qa-del") {
       await deleteQaEntry(e.target.dataset.id);
+    } else if (act === "toggle-shortcuts") {
+      await toggleShortcuts();
     }
   } catch (err) {
     setStatus("err", err?.message ?? String(err));
+  }
+});
+
+// ---- keyboard shortcuts ----
+let shortcutsOn = true;
+
+function applyShortcutsUi() {
+  document.body.classList.toggle("show-shortcuts", shortcutsOn);
+  const btn = document.querySelector('[data-act="toggle-shortcuts"]');
+  if (btn) btn.classList.toggle("active", shortcutsOn);
+}
+
+async function toggleShortcuts() {
+  shortcutsOn = !shortcutsOn;
+  applyShortcutsUi();
+  await saveSettings({ showShortcuts: shortcutsOn });
+}
+
+// Click the action button bound to a single-letter key.
+function runKey(key) {
+  const btn = document.querySelector(`.actions button[data-key="${key}"]:not([disabled])`);
+  if (btn) {
+    btn.click();
+    return true;
+  }
+  return false;
+}
+
+document.addEventListener("keydown", (e) => {
+  // Ctrl/Cmd+Enter inside the question box generates an answer.
+  const inField = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && e.target?.dataset?.role === "qa-input") {
+    e.preventDefault();
+    const gen = document.querySelector('[data-act="qa-generate"]');
+    if (gen) gen.click();
+    return;
+  }
+  // Don't hijack typing.
+  if (inField) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  if (e.key === "?") {
+    e.preventDefault();
+    void toggleShortcuts();
+    return;
+  }
+  const k = e.key.toLowerCase();
+  if (/^[a-z]$/.test(k) && runKey(k)) {
+    e.preventDefault();
   }
 });
 
@@ -290,6 +341,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 (async () => {
+  const settings = await getSettings();
+  shortcutsOn = settings.showShortcuts !== false;
+  applyShortcutsUi();
   await loadDashboardBase();
   await paintQa();
   await paintConnection();

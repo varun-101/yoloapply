@@ -95,6 +95,7 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
             hasJd={!!app.jdText && app.jdText.length > 50}
             hasPdf={hasPdf}
             hasCoverLetter={hasCoverLetter}
+            personalizeStatus={app.personalizeStatus}
             applyUrl={app.applyUrl}
           />
 

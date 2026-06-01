@@ -8,6 +8,7 @@ Style:
 - 3 short paragraphs: (1) why this role/company and a one-line hook, (2) the strongest 1-2 proof points from the candidate's real work mapped to the JD, (3) a concise close with a call to action.
 - ~220-320 words total. No purple prose, no "I am writing to apply", no clichés like "team player" or "fast-paced environment".
 - Plain, human, direct. First person.
+- CRITICAL — write like a person, not an AI. Do NOT use em dashes or en dashes (the long "—" / "–" characters). Use commas, periods, or parentheses instead. Avoid AI tells: don't overuse "moreover", "furthermore", "leverage", "passionate", "delve", or triadic lists ("X, Y, and Z" stacked repeatedly). Vary sentence length. Prefer simple punctuation.
 
 Output STRICT JSON only:
 { "salutation": "Dear Hiring Manager,", "paragraphs": ["...", "...", "..."], "closing": "Sincerely," }`;
@@ -65,10 +66,31 @@ Write the cover letter per the schema. Pick the proof points that best match THI
     temperature: 0.6,
   });
   return {
-    salutation: draft.salutation || "Dear Hiring Manager,",
-    paragraphs: Array.isArray(draft.paragraphs) ? draft.paragraphs.filter(Boolean) : [],
-    closing: draft.closing || "Sincerely,",
+    salutation: deAi(draft.salutation || "Dear Hiring Manager,"),
+    paragraphs: (Array.isArray(draft.paragraphs) ? draft.paragraphs.filter(Boolean) : []).map(deAi),
+    closing: deAi(draft.closing || "Sincerely,"),
   };
+}
+
+// Strip the most obvious "written by an LLM" punctuation tell — em/en dashes —
+// and tidy the spacing left behind. Em dashes become a comma or period depending
+// on context; spaced en dashes used as separators become commas (numeric ranges
+// like 2024–2026 are left alone).
+export function deAi(text: string): string {
+  if (!text) return text;
+  return text
+    // " word — word " (spaced em dash joining clauses) -> ", "
+    .replace(/\s+—\s+/g, ", ")
+    // "word—word" (unspaced em dash) -> ", "
+    .replace(/—/g, ", ")
+    // spaced en dash used as a separator -> ", " (ranges have no surrounding spaces)
+    .replace(/\s+–\s+/g, ", ")
+    // tidy: collapse accidental double punctuation / spaces
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*,/g, ",")
+    .replace(/,\s*\./g, ".")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 // Render the structured draft to a plain-text cover letter (for copy/paste + email).

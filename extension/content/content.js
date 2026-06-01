@@ -17,6 +17,27 @@
     });
   }
 
+  // ---- saved-job cache (survives page refresh) ----
+  // Keyed by normalized URL in chrome.storage.local so a saved application is
+  // restored when the same job page is reloaded.
+  function normalizeUrl(url) {
+    try {
+      const u = new URL(url);
+      u.hash = "";
+      return u.toString();
+    } catch {
+      return url;
+    }
+  }
+  function getSavedJob() {
+    const key = normalizeUrl(location.href);
+    return new Promise((resolve) =>
+      chrome.storage.local.get({ savedJobs: {} }, (items) => resolve(items.savedJobs?.[key] ?? null))
+    );
+  }
+  // Saving is persisted by the background service worker (chrome.storage.local),
+  // so it survives this content script unloading. We only read here.
+
   // ---- detection ----
   function pageText() {
     // Strip nav/footer noise, then collapse whitespace.
@@ -417,35 +438,44 @@
   }
 
   // ---- actions ----
+  // Fire-and-forget: the background worker extracts + creates the application and
+  // persists the result. We don't await the whole chain, so switching tabs or
+  // navigating away no longer aborts the save.
   async function onSave() {
-    showStatus("info", "Extracting job description…");
     const text = pageText();
-    const resp = await send({ type: "extractFromDom", text, url: location.href });
-    if (!resp?.ok) throw new Error(resp?.error ?? "extraction failed");
-    const job = resp.job;
-    state.job = job;
-    if (!job.company || !job.role) {
-      showStatus("err", "Couldn't extract company or role. Try selecting the JD area and reloading the page.");
+    if (text.length < 200) {
+      showStatus("err", "Not enough text on this page to extract a job posting.");
       return;
     }
-    showStatus("info", `Saving "${job.role} @ ${job.company}"…`);
-    const created = await send({
-      type: "createApplication",
-      payload: {
-        company: job.company,
-        role: job.role,
-        location: job.location,
-        source: job.source ?? "portal",
-        jdUrl: location.href,
-        jdText: job.jdText,
-        applyUrl: job.applyUrl || location.href,
-        personalize: false,
-      },
-    });
-    if (!created?.ok) throw new Error(created?.error ?? "save failed");
-    state.applicationId = created.created.id;
-    widget.querySelector('[data-act="personalize"]').disabled = false;
-    showStatus("ok", `Saved. Application ID: ${state.applicationId.slice(0, 10)}…`);
+    showStatus("info", "Extracting & saving in the background…");
+    const resp = await send({ type: "saveJob", text, url: location.href });
+    if (!resp?.ok) throw new Error(resp?.error ?? "couldn't start the save");
+    showStatus("info", "Saving… you can switch tabs; it finishes in the background.");
+  }
+
+  // Apply a saved-job record (saving | saved | error) to the widget + state.
+  function reflectSaved(saved) {
+    if (!saved) return;
+    if (saved.status === "saving") {
+      showStatus("info", "Saving job in the background…");
+    } else if (saved.status === "saved" && saved.applicationId) {
+      state.applicationId = saved.applicationId;
+      state.job = saved.job || { company: saved.company, role: saved.role };
+      markSaved(saved.company, saved.role);
+      showStatus("ok", `Saved "${saved.role || ""} @ ${saved.company || ""}".`);
+    } else if (saved.status === "error") {
+      showStatus("err", "Save failed: " + (saved.error || "unknown error"));
+    }
+  }
+
+  // Reflect a saved application in the widget (button label + enabled actions).
+  function markSaved(company, role) {
+    const saveBtn = widget?.querySelector('[data-act="save"]');
+    if (saveBtn) saveBtn.textContent = "Saved ✓ — re-save";
+    const personalize = widget?.querySelector('[data-act="personalize"]');
+    if (personalize) personalize.disabled = false;
+    void company;
+    void role;
   }
 
   async function onPersonalize() {
@@ -637,6 +667,11 @@
     }
     ui();
     if (widget.classList.contains("yolo-hidden")) widget.classList.remove("yolo-hidden");
+    // Restore a previously-saved (or in-progress) application for this URL.
+    if (!state.applicationId) {
+      const saved = await getSavedJob();
+      if (saved) reflectSaved(saved);
+    }
     setDetection({ isJob: looksLikeJobPosting(), isForm: findApplicationForms().length > 0 });
     return true;
   }
@@ -687,8 +722,8 @@
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
 
-  // React to setting changes in real-time (no refresh needed).
-  chrome.storage.onChanged.addListener((changes) => {
+  // React to setting + saved-job changes in real-time (no refresh needed).
+  chrome.storage.onChanged.addListener((changes, area) => {
     if (changes.showWidget) {
       if (changes.showWidget.newValue === false && widget) {
         widget.remove();
@@ -697,6 +732,11 @@
       } else if (changes.showWidget.newValue !== false && !widget) {
         setTimeout(mount, 200);
       }
+    }
+    // Background save finished/changed for this page → reflect it live.
+    if (area === "local" && changes.savedJobs) {
+      const saved = (changes.savedJobs.newValue || {})[normalizeUrl(location.href)];
+      if (saved) reflectSaved(saved);
     }
   });
 
