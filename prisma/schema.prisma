@@ -100,6 +100,24 @@ model JobLead {
   @@index([status, postedAt])
 }
 
+model AtsCompany {
+  id                  String    @id @default(cuid())
+  ats                 String    // "greenhouse" | "lever" | "ashby"
+  slug                String    // public board API token
+  name                String
+  active              Boolean   @default(true) // false = demoted (dead board), skipped by scans
+  consecutiveFailures Int       @default(0) // fetch failures in a row; demoted at threshold
+  lastError           String?
+  lastFetchedAt       DateTime?
+  lastMatchAt         DateTime? // last scan where this board yielded a lead passing the filters
+  totalMatches        Int       @default(0)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([ats, slug])
+  @@index([active])
+}
+
 model Event {
   id            String   @id @default(cuid())
   applicationId String

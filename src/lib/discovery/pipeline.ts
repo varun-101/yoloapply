@@ -60,14 +60,6 @@ export interface DiscoveryRunResult {
 }
 
 export async function runDiscovery(): Promise<DiscoveryRunResult> {
-  const [sheet, jobfound, ats, hn] = await Promise.all([
-    fetchSheetLeads(),
-    fetchJobfoundLeads(),
-    fetchAtsLeads(),
-    fetchHnLeads(),
-  ]);
-  const results = [sheet, jobfound, ...ats, hn];
-
   const [existingLeads, applications] = await Promise.all([
     prisma.jobLead.findMany({
       select: { id: true, source: true, externalId: true, canonicalUrl: true, sources: true },
@@ -76,6 +68,16 @@ export async function runDiscovery(): Promise<DiscoveryRunResult> {
   ]);
 
   const seenSourceIds = new Set(existingLeads.map((l) => `${l.source}::${l.externalId}`));
+
+  // The ATS fetcher takes the seen ids so it can skip per-job JD requests for
+  // postings that would be deduped below anyway.
+  const [sheet, jobfound, ats, hn] = await Promise.all([
+    fetchSheetLeads(),
+    fetchJobfoundLeads(),
+    fetchAtsLeads(seenSourceIds),
+    fetchHnLeads(),
+  ]);
+  const results = [sheet, jobfound, ...ats, hn];
   const byCanonical = new Map<string, { id: string; sources: string | null; source: string }>();
   for (const l of existingLeads) {
     if (l.canonicalUrl) byCanonical.set(l.canonicalUrl, l);

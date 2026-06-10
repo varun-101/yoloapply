@@ -18,9 +18,12 @@ async function main() {
   const started = Date.now();
   const result = await runDiscovery();
   for (const s of result.sources) {
-    const line = s.error
-      ? `${s.source}: FAILED — ${s.error}`
-      : `${s.source}: ${s.created} new / ${s.fetched} fetched (${s.duplicates} dupes, ${s.alreadyApplied} already applied)`;
+    // A source can partially fail (a few boards down) while the rest ingested
+    // fine — only call it FAILED when nothing came back at all.
+    const line =
+      s.error && s.fetched === 0
+        ? `${s.source}: FAILED — ${s.error}`
+        : `${s.source}: ${s.created} new / ${s.fetched} fetched (${s.duplicates} dupes, ${s.alreadyApplied} already applied)${s.error ? ` — partial: ${s.error}` : ""}`;
     console.log(line);
   }
   if (result.scoreError) console.log(`scoring: ${result.scoreError}`);

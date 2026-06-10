@@ -67,6 +67,7 @@ export default function DiscoverPage() {
   const [source, setSource] = useState("");
   const [jobType, setJobType] = useState("");
   const [days, setDays] = useState("");
+  const [sort, setSort] = useState("trust");
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
   const [busyLead, setBusyLead] = useState<string | null>(null);
@@ -77,9 +78,10 @@ export default function DiscoverPage() {
     if (source) qs.set("source", source);
     if (jobType) qs.set("jobType", jobType);
     if (days) qs.set("days", days);
+    if (sort !== "trust") qs.set("sort", sort);
     const res = await fetch(`/api/discovery/leads?${qs}`);
     setLeads(await res.json());
-  }, [status, source, jobType, days]);
+  }, [status, source, jobType, days, sort]);
 
   useEffect(() => {
     load().catch((e) => setErr(String(e)));
@@ -94,9 +96,9 @@ export default function DiscoverPage() {
       const data: RunResult & { error?: string } = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Scan failed");
       const parts = data.sources.map((s) =>
-        s.error
+        s.error && s.fetched === 0
           ? `${sourceLabel(s.source)}: failed (${s.error})`
-          : `${sourceLabel(s.source)}: ${s.created} new of ${s.fetched}`
+          : `${sourceLabel(s.source)}: ${s.created} new of ${s.fetched}${s.error ? " (some boards failed)" : ""}`
       );
       setScanMsg(`${data.created} new lead${data.created === 1 ? "" : "s"} — ${parts.join(" · ")}`);
       await load();
@@ -215,6 +217,13 @@ export default function DiscoverPage() {
           <option value="">Any type</option>
           <option value="Full Time">Full Time</option>
           <option value="Internship">Internship</option>
+        </select>
+        <select className={SELECT_CLS} value={sort} onChange={(e) => setSort(e.target.value)}>
+          <option value="trust">Trusted sources first</option>
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+          <option value="score">Best fit first</option>
+          <option value="company">Company A–Z</option>
         </select>
       </div>
 

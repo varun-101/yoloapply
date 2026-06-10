@@ -1,10 +1,31 @@
+import { prisma } from "../db";
 import { htmlToText } from "../extractJob";
-import { LOCATION_KEYWORDS, locationMatches, titleMatches, WATCHLIST, WatchlistEntry } from "./config";
+import { LOCATION_KEYWORDS, locationMatches, titleMatches } from "./config";
 import type { FetchResult, RawLead } from "./types";
 
-// Official, unauthenticated job-board APIs for companies on the watchlist.
-// Unlike the curated tier-1 sources these boards list every open role, so the
-// keyword + location filters from config.ts apply here.
+// Official, unauthenticated job-board APIs. Companies come from the AtsCompany
+// table (seeded from the kalil0321/ats-scrapers dataset, filtered to boards
+// with India postings — scripts/seed-ats-companies.ts). These boards list every
+// open role, so the keyword + location filters from config.ts apply here.
+
+const CONCURRENCY = 12;
+const TIMEOUT_MS = 20_000;
+// A board that fails this many scans in a row (404 after an ATS migration,
+// usually) gets active=false and is skipped until manually revived.
+const MAX_CONSECUTIVE_FAILURES = 5;
+// Greenhouse JDs need a per-job detail request; cap them per board so one
+// giant board can't turn a scan into thousands of requests. Uncapped jobs
+// still become leads, just without JD text.
+const MAX_JD_FETCHES_PER_BOARD = 25;
+
+interface BoardCompany {
+  name: string;
+  slug: string;
+}
+
+function get(url: string): Promise<Response> {
+  return fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+}
 
 // Greenhouse ships the JD HTML entity-escaped inside JSON.
 function unescapeHtml(s: string): string {
@@ -24,36 +45,58 @@ function normalizeJobType(s: string | undefined): string | undefined {
   return s;
 }
 
-async function fetchGreenhouse(entry: WatchlistEntry): Promise<RawLead[]> {
-  const res = await fetch(
-    `https://boards-api.greenhouse.io/v1/boards/${entry.slug}/jobs?content=true`
-  );
-  if (!res.ok) throw new Error(`${entry.slug}: HTTP ${res.status}`);
-  const json = (await res.json()) as {
-    jobs: {
-      id: number;
-      title: string;
-      absolute_url: string;
-      location?: { name?: string };
-      content?: string;
-      first_published?: string;
-      updated_at?: string;
-    }[];
-  };
-  return json.jobs.map((j) => ({
-    source: "greenhouse",
-    externalId: String(j.id),
-    company: entry.name,
-    role: j.title.trim(),
-    location: j.location?.name,
-    url: j.absolute_url,
-    jdText: j.content ? htmlToText(unescapeHtml(j.content)) : undefined,
-    postedAt: j.first_published ? new Date(j.first_published) : j.updated_at ? new Date(j.updated_at) : undefined,
-  }));
+interface GreenhouseJob {
+  id: number;
+  title: string;
+  absolute_url: string;
+  location?: { name?: string };
+  content?: string;
+  first_published?: string;
+  updated_at?: string;
 }
 
-async function fetchLever(entry: WatchlistEntry): Promise<RawLead[]> {
-  const res = await fetch(`https://api.lever.co/v0/postings/${entry.slug}?mode=json`);
+async function fetchGreenhouse(entry: BoardCompany, seenIds: ReadonlySet<string>): Promise<RawLead[]> {
+  // List without content — the matched jobs get a detail fetch below. Pulling
+  // content board-wide would download every JD on every board on every scan.
+  const res = await get(`https://boards-api.greenhouse.io/v1/boards/${entry.slug}/jobs`);
+  if (!res.ok) throw new Error(`${entry.slug}: HTTP ${res.status}`);
+  const json = (await res.json()) as { jobs: GreenhouseJob[] };
+
+  const matched = json.jobs.filter(
+    (j) => titleMatches(j.title) && locationMatches(j.location?.name)
+  );
+
+  let jdFetches = 0;
+  const leads: RawLead[] = [];
+  for (const j of matched) {
+    let detail: GreenhouseJob | undefined;
+    if (!seenIds.has(`greenhouse::${j.id}`) && jdFetches < MAX_JD_FETCHES_PER_BOARD) {
+      jdFetches++;
+      try {
+        const dres = await get(`https://boards-api.greenhouse.io/v1/boards/${entry.slug}/jobs/${j.id}`);
+        if (dres.ok) detail = (await dres.json()) as GreenhouseJob;
+      } catch {
+        // JD is nice-to-have; the lead is still worth ingesting without it.
+      }
+    }
+    const published = j.first_published ?? detail?.first_published;
+    const updated = j.updated_at ?? detail?.updated_at;
+    leads.push({
+      source: "greenhouse",
+      externalId: String(j.id),
+      company: entry.name,
+      role: j.title.trim(),
+      location: j.location?.name,
+      url: j.absolute_url,
+      jdText: detail?.content ? htmlToText(unescapeHtml(detail.content)) : undefined,
+      postedAt: published ? new Date(published) : updated ? new Date(updated) : undefined,
+    });
+  }
+  return leads;
+}
+
+async function fetchLever(entry: BoardCompany, _seenIds: ReadonlySet<string>): Promise<RawLead[]> {
+  const res = await get(`https://api.lever.co/v0/postings/${entry.slug}?mode=json`);
   if (!res.ok) throw new Error(`${entry.slug}: HTTP ${res.status}`);
   const json = (await res.json()) as {
     id: string;
@@ -63,21 +106,23 @@ async function fetchLever(entry: WatchlistEntry): Promise<RawLead[]> {
     descriptionPlain?: string;
     categories?: { location?: string; commitment?: string };
   }[];
-  return json.map((j) => ({
-    source: "lever",
-    externalId: j.id,
-    company: entry.name,
-    role: j.text.trim(),
-    location: j.categories?.location,
-    url: j.hostedUrl,
-    jdText: j.descriptionPlain?.trim() || undefined,
-    jobType: normalizeJobType(j.categories?.commitment),
-    postedAt: j.createdAt ? new Date(j.createdAt) : undefined,
-  }));
+  return json
+    .filter((j) => titleMatches(j.text) && locationMatches(j.categories?.location))
+    .map((j) => ({
+      source: "lever",
+      externalId: j.id,
+      company: entry.name,
+      role: j.text.trim(),
+      location: j.categories?.location,
+      url: j.hostedUrl,
+      jdText: j.descriptionPlain?.trim() || undefined,
+      jobType: normalizeJobType(j.categories?.commitment),
+      postedAt: j.createdAt ? new Date(j.createdAt) : undefined,
+    }));
 }
 
-async function fetchAshby(entry: WatchlistEntry): Promise<RawLead[]> {
-  const res = await fetch(`https://api.ashbyhq.com/posting-api/job-board/${entry.slug}`);
+async function fetchAshby(entry: BoardCompany, _seenIds: ReadonlySet<string>): Promise<RawLead[]> {
+  const res = await get(`https://api.ashbyhq.com/posting-api/job-board/${entry.slug}`);
   if (!res.ok) throw new Error(`${entry.slug}: HTTP ${res.status}`);
   const json = (await res.json()) as {
     jobs: {
@@ -94,7 +139,10 @@ async function fetchAshby(entry: WatchlistEntry): Promise<RawLead[]> {
     }[];
   };
   return json.jobs
-    .filter((j) => j.isListed !== false)
+    .filter(
+      (j) =>
+        j.isListed !== false && titleMatches(j.title) && locationMatches(j.location, j.isRemote)
+    )
     .map((j) => ({
       source: "ashby",
       externalId: j.id,
@@ -119,27 +167,83 @@ const FETCHERS = {
   ashby: fetchAshby,
 } as const;
 
-export async function fetchAtsLeads(): Promise<FetchResult[]> {
+function summarizeErrors(errors: string[]): string | undefined {
+  if (!errors.length) return undefined;
+  if (errors.length <= 3) return errors.join("; ");
+  return `${errors.slice(0, 3).join("; ")} (+${errors.length - 3} more boards failed)`;
+}
+
+// `seenIds` ("source::externalId" of already-ingested leads) lets the
+// greenhouse fetcher skip JD detail requests for jobs the pipeline will
+// dedupe anyway.
+export async function fetchAtsLeads(seenIds: ReadonlySet<string> = new Set()): Promise<FetchResult[]> {
+  const companies = await prisma.atsCompany.findMany({ where: { active: true } });
+
   const byAts = new Map<string, { leads: RawLead[]; errors: string[] }>();
   for (const ats of Object.keys(FETCHERS)) byAts.set(ats, { leads: [], errors: [] });
 
+  const bookkeeping: { id: string; data: Record<string, unknown> }[] = [];
+  let next = 0;
+
   await Promise.all(
-    WATCHLIST.map(async (entry) => {
-      const bucket = byAts.get(entry.ats)!;
-      try {
-        const all = await FETCHERS[entry.ats](entry);
-        bucket.leads.push(
-          ...all.filter((l) => titleMatches(l.role) && locationMatches(l.location))
-        );
-      } catch (e: unknown) {
-        bucket.errors.push(e instanceof Error ? e.message : String(e));
+    Array.from({ length: CONCURRENCY }, async () => {
+      while (next < companies.length) {
+        const c = companies[next++];
+        const fetcher = FETCHERS[c.ats as keyof typeof FETCHERS];
+        const bucket = byAts.get(c.ats);
+        const now = new Date();
+        if (!fetcher || !bucket) {
+          bookkeeping.push({
+            id: c.id,
+            data: { active: false, lastError: `unknown ats "${c.ats}"` },
+          });
+          continue;
+        }
+        try {
+          const leads = await fetcher({ name: c.name, slug: c.slug }, seenIds);
+          bucket.leads.push(...leads);
+          bookkeeping.push({
+            id: c.id,
+            data: {
+              consecutiveFailures: 0,
+              lastError: null,
+              lastFetchedAt: now,
+              ...(leads.length > 0
+                ? { lastMatchAt: now, totalMatches: { increment: leads.length } }
+                : {}),
+            },
+          });
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const failures = c.consecutiveFailures + 1;
+          bucket.errors.push(msg);
+          bookkeeping.push({
+            id: c.id,
+            data: {
+              consecutiveFailures: failures,
+              lastError: msg,
+              lastFetchedAt: now,
+              ...(failures >= MAX_CONSECUTIVE_FAILURES ? { active: false } : {}),
+            },
+          });
+        }
       }
     })
   );
 
+  // Persist per-board health/yield in chunked transactions — one update per
+  // board per scan would be ~1k round-trips on SQLite.
+  for (let i = 0; i < bookkeeping.length; i += 100) {
+    await prisma.$transaction(
+      bookkeeping
+        .slice(i, i + 100)
+        .map((u) => prisma.atsCompany.update({ where: { id: u.id }, data: u.data }))
+    );
+  }
+
   return [...byAts.entries()].map(([source, { leads, errors }]) => ({
     source,
     leads,
-    error: errors.length ? errors.join("; ") : undefined,
+    error: summarizeErrors(errors),
   }));
 }

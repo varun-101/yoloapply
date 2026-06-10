@@ -1,26 +1,9 @@
-// Watchlist + keyword config for the non-curated discovery sources (ATS boards,
-// HN). The tier-1 sources (freshers sheet, jobfound) are already curated for
-// freshers, so these filters do NOT apply to them.
-
-export interface WatchlistEntry {
-  name: string;
-  ats: "greenhouse" | "lever" | "ashby";
-  slug: string;
-}
-
-// Companies whose job boards get scanned every run. Slugs verified against the
-// public board APIs — add more entries here as you find them:
-//   greenhouse: https://boards-api.greenhouse.io/v1/boards/<slug>/jobs
-//   lever:      https://api.lever.co/v0/postings/<slug>?mode=json
-//   ashby:      https://api.ashbyhq.com/posting-api/job-board/<slug>
-export const WATCHLIST: WatchlistEntry[] = [
-  { name: "Groww", ats: "greenhouse", slug: "groww" },
-  { name: "Postman", ats: "greenhouse", slug: "postman" },
-  { name: "PhonePe", ats: "greenhouse", slug: "phonepe" },
-  { name: "CRED", ats: "lever", slug: "cred" },
-  { name: "Meesho", ats: "lever", slug: "meesho" },
-  { name: "Atlan", ats: "ashby", slug: "atlan" },
-];
+// Keyword config for the non-curated discovery sources (ATS boards, HN). The
+// tier-1 sources (freshers sheet, jobfound) are already curated for freshers,
+// so these filters do NOT apply to them.
+//
+// The ATS company watchlist lives in the AtsCompany table, seeded from the
+// kalil0321/ats-scrapers dataset — see scripts/seed-ats-companies.ts.
 
 // A role's title must match at least one of these.
 export const INCLUDE_KEYWORDS = [
