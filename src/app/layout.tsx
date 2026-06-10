@@ -1,6 +1,6 @@
 import "./globals.css";
 import Link from "next/link";
-import { Briefcase, FileText, Mail, LayoutDashboard, PlusCircle, Users } from "lucide-react";
+import { Briefcase, FileText, Mail, LayoutDashboard, PlusCircle, Radar, Users } from "lucide-react";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -25,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
             <nav className="p-2 text-sm">
               <NavItem href="/" icon={<LayoutDashboard className="h-4 w-4" />} label="Dashboard" />
+              <NavItem href="/discover" icon={<Radar className="h-4 w-4" />} label="Discover" />
               <NavItem href="/applications/new" icon={<PlusCircle className="h-4 w-4" />} label="New Application" />
               <NavItem href="/applications" icon={<Briefcase className="h-4 w-4" />} label="Applications" />
               <NavItem href="/cold-email" icon={<Mail className="h-4 w-4" />} label="Cold Outreach" />

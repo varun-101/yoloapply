@@ -49,6 +49,10 @@ the bottom-right with five actions:
 
 The popup (toolbar icon) shows recent applications and gives the same actions.
 
+The toolbar icon also shows a green badge with the number of fresh tier-1
+discovery leads (trusted sources, posted in the last 24h) — refreshed every
+30 minutes via `chrome.alarms`. Review them at `http://localhost:3001/discover`.
+
 ## Architecture
 
 ```

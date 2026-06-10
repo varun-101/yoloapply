@@ -32,7 +32,7 @@
       "description": "Open the YOLOapply popup"
     }
   },
-  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "permissions": ["activeTab", "alarms", "scripting", "storage", "tabs"],
   "host_permissions": [
     "http://localhost:3001/*",
     "http://127.0.0.1:3001/*",

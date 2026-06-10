@@ -49,6 +49,7 @@ export const api = {
     request("/api/autofill-map", { method: "POST", body: JSON.stringify(payload) }),
   coverLetter: (id) => request(`/api/applications/${id}/cover-letter`, { method: "POST" }),
   resumeInfo: () => request("/api/resume"),
+  freshLeads: () => request("/api/discovery/leads?status=new&days=1"),
 };
 
 // Returns the resume PDF as a Blob — either the personalized PDF for `appId`

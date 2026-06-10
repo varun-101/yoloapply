@@ -71,6 +71,35 @@ model Email {
   createdAt     DateTime @default(now())
 }
 
+model JobLead {
+  id            String   @id @default(cuid())
+  source        String   // "sheet" | "jobfound" | (later: "greenhouse" | "lever" | "ashby" | "hn")
+  externalId    String   // hygraph post id; for the sheet, a hash of company+role+date
+  sources       String?  // comma-separated list when the same posting was found in multiple sources
+  company       String
+  role          String
+  location      String?
+  url           String?  // raw apply URL (sheet rows occasionally have none)
+  canonicalUrl  String?  // tracking params stripped — cross-source dedupe key
+  jdText        String?
+  salary        String?
+  jobType       String?  // "Full Time" | "Internship"
+  experience    String?
+  skills        String?
+  postedAt      DateTime?
+  contactEmail  String?  // hiring contact when the source includes one (HN posts often do)
+  score         Int?     // LLM fit score 0-100 (phase 2)
+  scoreReason   String?
+  status        String   @default("new") // new | promoted | dismissed
+  applicationId String?  // set on promote
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([source, externalId])
+  @@index([canonicalUrl])
+  @@index([status, postedAt])
+}
+
 model Event {
   id            String   @id @default(cuid())
   applicationId String

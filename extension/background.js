@@ -14,7 +14,43 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === "install") {
     chrome.runtime.openOptionsPage();
   }
+  scheduleBadgeRefresh();
 });
+
+// ---- Fresh-leads badge -----------------------------------------------------
+// Shows the number of new tier-1 discovery leads (trusted sources, posted in
+// the last 24h) on the toolbar icon. Polls every 30 minutes via chrome.alarms
+// (MV3 service workers can't setInterval — they get suspended).
+
+const BADGE_ALARM = "fresh-leads-badge";
+const TIER1_SOURCES = new Set(["sheet", "jobfound"]);
+
+function scheduleBadgeRefresh() {
+  chrome.alarms.create(BADGE_ALARM, { delayInMinutes: 0.1, periodInMinutes: 30 });
+}
+
+async function refreshBadge() {
+  try {
+    const leads = await api.freshLeads();
+    const count = (Array.isArray(leads) ? leads : []).filter((l) =>
+      TIER1_SOURCES.has(l.source)
+    ).length;
+    await chrome.action.setBadgeBackgroundColor({ color: "#059669" });
+    await chrome.action.setBadgeText({ text: count > 0 ? String(count) : "" });
+    await chrome.action.setTitle({
+      title: count > 0 ? `YOLOapply — ${count} fresh lead${count === 1 ? "" : "s"} to review` : "YOLOapply",
+    });
+  } catch {
+    // Backend down / not configured — clear the badge rather than show stale.
+    await chrome.action.setBadgeText({ text: "" }).catch?.(() => {});
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === BADGE_ALARM) refreshBadge();
+});
+
+chrome.runtime.onStartup.addListener(scheduleBadgeRefresh);
 
 // Keyboard command: toggle the in-page widget (default Alt+Shift+Y).
 chrome.commands.onCommand.addListener(async (command) => {

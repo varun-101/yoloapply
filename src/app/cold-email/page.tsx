@@ -12,7 +12,7 @@ function ColdEmailInner() {
   const [company, setCompany] = useState(sp.get("company") ?? "");
   const [recipientName, setRecipientName] = useState("");
   const [recipientTitle, setRecipientTitle] = useState("");
-  const [recipientEmail, setRecipientEmail] = useState("");
+  const [recipientEmail, setRecipientEmail] = useState(sp.get("email") ?? "");
   const [role, setRole] = useState(sp.get("role") ?? "");
   const [hookContext, setHookContext] = useState("");
   const [applicationId] = useState(sp.get("applicationId") ?? "");
