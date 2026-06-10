@@ -71,6 +71,18 @@ model Email {
   createdAt     DateTime @default(now())
 }
 
+model ScanRun {
+  id          String    @id @default(cuid())
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime? // null while running (or if the process died mid-run)
+  trigger     String    @default("dashboard") // "dashboard" | "script"
+  created     Int       @default(0)
+  scored      Int       @default(0)
+  sourceStats String?   // JSON SourceStats[] — per-source fetched/created/dupes/errors
+  error       String?   // run-level failure or scoring error
+  leads       JobLead[]
+}
+
 model JobLead {
   id            String   @id @default(cuid())
   source        String   // "sheet" | "jobfound" | (later: "greenhouse" | "lever" | "ashby" | "hn")
@@ -92,12 +104,15 @@ model JobLead {
   scoreReason   String?
   status        String   @default("new") // new | promoted | dismissed
   applicationId String?  // set on promote
+  scanRunId     String?  // the scan that ingested this lead (null for pre-history leads)
+  scanRun       ScanRun? @relation(fields: [scanRunId], references: [id], onDelete: SetNull)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@unique([source, externalId])
   @@index([canonicalUrl])
   @@index([status, postedAt])
+  @@index([scanRunId])
 }
 
 model AtsCompany {

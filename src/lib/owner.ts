@@ -24,7 +24,7 @@ export const owner = {
       bullets: [
         "Built full-scale backend infrastructure to manage home loans for customers across Mumbai as one of two backend engineers.",
         "Collaborated with internal teams and external banking partners (HDFC, SBI) to automate loan approvals on behalf of partner banks.",
-        "Designed PostgreSQL schemas and Java services to streamline end-to-end loan processing.",
+        "Designed PostgreSQL schemas and JavaScript services to streamline end-to-end loan processing.",
       ],
     },
   ],

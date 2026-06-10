@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SOURCE_LABEL } from "@/lib/discovery/types";
-import { CheckCircle2, ExternalLink, FileSearch, Loader2, Mail, RadarIcon, Sparkles, X } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileSearch, History, Loader2, Mail, RadarIcon, Sparkles, X } from "lucide-react";
 
 interface Lead {
   id: string;
@@ -50,6 +50,12 @@ function timeAgo(iso: string | null): string {
   return days === 1 ? "1 day ago" : `${days} days ago`;
 }
 
+interface LastScan {
+  startedAt: string;
+  finishedAt: string | null;
+  created: number;
+}
+
 function isFresh(iso: string | null): boolean {
   return !!iso && Date.now() - new Date(iso).getTime() < 24 * 3_600_000;
 }
@@ -72,6 +78,21 @@ export default function DiscoverPage() {
   const [scanMsg, setScanMsg] = useState<string | null>(null);
   const [busyLead, setBusyLead] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [lastScan, setLastScan] = useState<LastScan | null>(null);
+
+  const loadLastScan = useCallback(async () => {
+    try {
+      const res = await fetch("/api/discovery/scans?take=1");
+      const scans: LastScan[] = await res.json();
+      setLastScan(scans[0] ?? null);
+    } catch {
+      // The indicator is decorative — never block the page on it.
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLastScan();
+  }, [loadLastScan]);
 
   const load = useCallback(async () => {
     const qs = new URLSearchParams({ status });
@@ -101,7 +122,7 @@ export default function DiscoverPage() {
           : `${sourceLabel(s.source)}: ${s.created} new of ${s.fetched}${s.error ? " (some boards failed)" : ""}`
       );
       setScanMsg(`${data.created} new lead${data.created === 1 ? "" : "s"} — ${parts.join(" · ")}`);
-      await load();
+      await Promise.all([load(), loadLastScan()]);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -174,10 +195,22 @@ export default function DiscoverPage() {
             Fresh postings from your trusted sources — apply early, get reviewed first.
           </p>
         </div>
-        <Button onClick={scan} disabled={scanning}>
-          {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RadarIcon className="h-4 w-4" />}
-          {scanning ? "Scanning…" : "Scan now"}
-        </Button>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/discover/history"
+            className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700"
+            title="Scan history"
+          >
+            <History className="h-3.5 w-3.5" />
+            {lastScan
+              ? `Last scan ${timeAgo(lastScan.finishedAt ?? lastScan.startedAt)} · ${lastScan.created} new`
+              : "Scan history"}
+          </Link>
+          <Button onClick={scan} disabled={scanning}>
+            {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RadarIcon className="h-4 w-4" />}
+            {scanning ? "Scanning…" : "Scan now"}
+          </Button>
+        </div>
       </div>
 
       {scanMsg && (

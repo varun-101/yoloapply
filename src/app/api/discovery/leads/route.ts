@@ -26,6 +26,8 @@ export async function GET(req: NextRequest) {
 
   const where: Record<string, unknown> = {};
   if (status !== "all") where.status = status;
+  const scanRunId = sp.get("scanRunId");
+  if (scanRunId) where.scanRunId = scanRunId;
   if (source) {
     // Match the primary source or any extra source recorded on the lead.
     where.OR = [{ source }, { sources: { contains: source } }];

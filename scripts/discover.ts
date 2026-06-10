@@ -16,7 +16,7 @@ try {
 
 async function main() {
   const started = Date.now();
-  const result = await runDiscovery();
+  const result = await runDiscovery("script");
   for (const s of result.sources) {
     // A source can partially fail (a few boards down) while the rest ingested
     // fine — only call it FAILED when nothing came back at all.

@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { fetchAtsLeads } from "./ats";
 import { fetchHnLeads } from "./hn";
@@ -53,13 +54,51 @@ export interface SourceStats {
 }
 
 export interface DiscoveryRunResult {
+  scanRunId: string;
   sources: SourceStats[];
   created: number;
   scored: number;
   scoreError?: string;
 }
 
-export async function runDiscovery(): Promise<DiscoveryRunResult> {
+// A scan takes minutes — if one is already running (double-click, button hit
+// while the scheduled script runs), join it instead of racing it on inserts.
+let activeRun: Promise<DiscoveryRunResult> | null = null;
+
+export function runDiscovery(trigger: "dashboard" | "script" = "dashboard"): Promise<DiscoveryRunResult> {
+  if (!activeRun) {
+    activeRun = doRunDiscovery(trigger).finally(() => {
+      activeRun = null;
+    });
+  }
+  return activeRun;
+}
+
+async function doRunDiscovery(trigger: string): Promise<DiscoveryRunResult> {
+  const scanRun = await prisma.scanRun.create({ data: { trigger } });
+  try {
+    const result = await ingestAndScore(scanRun.id);
+    await prisma.scanRun.update({
+      where: { id: scanRun.id },
+      data: {
+        finishedAt: new Date(),
+        created: result.created,
+        scored: result.scored,
+        sourceStats: JSON.stringify(result.sources),
+        error: result.scoreError ?? null,
+      },
+    });
+    return result;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await prisma.scanRun
+      .update({ where: { id: scanRun.id }, data: { finishedAt: new Date(), error: msg } })
+      .catch(() => {});
+    throw e;
+  }
+}
+
+async function ingestAndScore(scanRunId: string): Promise<DiscoveryRunResult> {
   const [existingLeads, applications] = await Promise.all([
     prisma.jobLead.findMany({
       select: { id: true, source: true, externalId: true, canonicalUrl: true, sources: true },
@@ -132,24 +171,37 @@ export async function runDiscovery(): Promise<DiscoveryRunResult> {
         continue;
       }
 
-      const created = await prisma.jobLead.create({
-        data: {
-          source: lead.source,
-          externalId: lead.externalId,
-          company: lead.company,
-          role: lead.role,
-          location: lead.location ?? null,
-          url: lead.url ?? null,
-          canonicalUrl: canonical ?? null,
-          jdText: lead.jdText ?? null,
-          salary: lead.salary ?? null,
-          jobType: lead.jobType ?? null,
-          experience: lead.experience ?? null,
-          skills: lead.skills ?? null,
-          contactEmail: lead.contactEmail ?? null,
-          postedAt: lead.postedAt ?? null,
-        },
-      });
+      let created;
+      try {
+        created = await prisma.jobLead.create({
+          data: {
+            source: lead.source,
+            externalId: lead.externalId,
+            company: lead.company,
+            role: lead.role,
+            location: lead.location ?? null,
+            url: lead.url ?? null,
+            canonicalUrl: canonical ?? null,
+            jdText: lead.jdText ?? null,
+            salary: lead.salary ?? null,
+            jobType: lead.jobType ?? null,
+            experience: lead.experience ?? null,
+            skills: lead.skills ?? null,
+            contactEmail: lead.contactEmail ?? null,
+            postedAt: lead.postedAt ?? null,
+            scanRunId,
+          },
+        });
+      } catch (e: unknown) {
+        // A scan in another process (scheduled script vs. dashboard button)
+        // can insert the same lead between our snapshot and this create —
+        // that's just a duplicate, not a failure.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          s.duplicates++;
+          continue;
+        }
+        throw e;
+      }
       if (canonical) {
         byCanonical.set(canonical, { id: created.id, sources: null, source: lead.source });
       }
@@ -163,6 +215,7 @@ export async function runDiscovery(): Promise<DiscoveryRunResult> {
   const scoring = await scoreNewLeads();
 
   return {
+    scanRunId,
     sources: stats,
     created: createdTotal,
     scored: scoring.scored,

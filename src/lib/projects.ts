@@ -31,7 +31,7 @@ export const PROJECT_BANK: ProjectBankItem[] = [
     approach:
       "Collapsed all three modes into a shared schema with mode-aware filters; trained an XGBoost regressor on local listings served from a Python sidecar with response caching.",
     outcome:
-      "Lighthouse 98, RMSE ₹2.4L on price model, p95 184ms on the pricing endpoint, 187kb first-load JS. Submitted to Rubix '25 with all acceptance criteria green and still live on Vercel.",
+      "Unified rent/buy/plot into a single flow with working price predictions from the XGBoost sidecar. Submitted to Rubix '25 with all acceptance criteria met and still live on Vercel.",
     techStack: ["Next.js 14", "Sanity CMS", "NextAuth.js", "Tailwind CSS", "Shadcn UI", "Geoapify", "Python", "XGBoost"],
     repoUrl: "https://github.com/varun-101/rubix25_71_backlog",
     liveUrl: "https://rubix25-71-backlog.vercel.app/",
