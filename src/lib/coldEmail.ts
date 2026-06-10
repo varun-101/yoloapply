@@ -1,4 +1,4 @@
-import { chatJson } from "./llm";
+import { chatJson, deAi } from "./llm";
 import { owner } from "./owner";
 import { PROJECT_BANK } from "./projects";
 
@@ -8,9 +8,31 @@ Constraints:
 - One short paragraph (3-5 sentences) max in the body, plus a 1-line sign-off.
 - Subject line: under 70 characters, no clickbait, no emojis.
 - Reference one concrete proof point from the candidate's work that maps to what the recipient's company does. Do NOT name-drop projects the candidate doesn't actually have.
+- If a JOB CONTEXT section is provided: pick the proof point that best matches the job description's requirements, mirror the JD's own vocabulary for skills, and mention the role by its exact title.
+- If a listing URL is provided: include it verbatim in the body, in parentheses right after the first mention of the role, so the recipient knows exactly which listing this is about. Never invent a URL if none is provided.
+- If the candidate has already applied through the portal, say so naturally ("I just applied for...") — the email is a signal boost, not a replacement application.
 - End with a single ask: a 15-minute conversation or a specific role.
 - No "I hope this email finds you well", no "I am writing to". Skip preambles.
-- Output STRICT JSON only.`;
+- Output STRICT JSON only.
+
+Two examples of the expected quality (style references — adapt the content to the actual candidate, company, and role; never copy these claims):
+
+Example 1 — a specific listing is known and the candidate already applied:
+subject: "SDE-1 Backend application + the loan infra I shipped as an intern"
+body: "Hi Anita,\\n\\nI just applied for your SDE-1 Backend opening (https://acmecorp.keka.com/careers/jobdetails/131288) and wanted to reach out directly. The role asks for PostgreSQL schema design and third-party API integrations, which is most of what I did at Loan for India, where as one of two backend engineers I built the Java services that automate home-loan approvals with HDFC and SBI. If my application makes it to your shortlist, I'd love 15 minutes to walk you through what I shipped.\\n\\nBest,\\nVarun"
+
+Example 2 — pure cold outreach, no specific listing:
+subject: "Backend engineer who shipped bank integrations, interested in Acme"
+body: "Hi Rahul,\\n\\nAcme's instant-settlement launch caught my eye because the hardest thing I've built is in the same lane: loan-approval automation with HDFC and SBI at Loan for India, where I was one of two backend engineers designing the PostgreSQL schemas and Java services underneath it. If you're adding early-career backend engineers this year, I'd value 15 minutes to find out where I could plug in.\\n\\nBest,\\nVarun"
+
+What makes these work: the subject states a proof point, not a request; the first sentence ties the candidate to the company or listing; the middle sentence is one concrete, verifiable claim mapped to the JD; the ask is small and singular.`;
+
+interface JobContext {
+  applyUrl?: string;
+  location?: string;
+  jdExcerpt?: string;
+  alreadyApplied?: boolean;
+}
 
 interface DraftInput {
   company: string;
@@ -18,6 +40,7 @@ interface DraftInput {
   recipientTitle?: string;
   role?: string; // role they're hiring for, if known
   hookContext?: string; // anything specific the user knows about the company / recent news
+  jobContext?: JobContext; // from the linked application, when drafting for one
 }
 
 export interface ColdEmailDraft {
@@ -41,27 +64,48 @@ export async function draftColdEmail(input: DraftInput): Promise<ColdEmailDraft>
     })),
   };
 
+  const job = input.jobContext;
+  const jobBlock = job
+    ? `
+# JOB CONTEXT (the specific listing this email is about)
+${job.applyUrl ? `Listing URL: ${job.applyUrl}\n` : ""}${job.location ? `Location: ${job.location}\n` : ""}${job.alreadyApplied ? "The candidate has ALREADY APPLIED to this listing through the portal.\n" : "The candidate has not applied yet — the email is the first touch.\n"}${job.jdExcerpt ? `Job description (excerpt):\n"""\n${job.jdExcerpt}\n"""` : ""}
+`
+    : "";
+
   const userPrompt = `# CANDIDATE
 ${JSON.stringify(candidate, null, 2)}
 
 # TARGET
 Company: ${input.company}
-${input.recipientName ? `Recipient name: ${input.recipientName}\n` : ""}${input.recipientTitle ? `Recipient title: ${input.recipientTitle}\n` : ""}${input.role ? `Role they're hiring for: ${input.role}\n` : ""}${input.hookContext ? `Extra context: ${input.hookContext}\n` : ""}
-
+${input.recipientName ? `Recipient name: ${input.recipientName}\n` : ""}${input.recipientTitle ? `Recipient title: ${input.recipientTitle}\n` : ""}${input.role ? `Role they're hiring for: ${input.role}\n` : ""}${input.hookContext ? `Extra context: ${input.hookContext}\n` : ""}${jobBlock}
 # TASK
-Write a cold email pitching the candidate for a software engineering role at this company. Pick the SINGLE most relevant proof point from the candidate's projects/experience that maps to what this company does (or the role they're hiring for if specified).
+Write a cold email pitching the candidate for a software engineering role at this company. Pick the SINGLE most relevant proof point from the candidate's projects/experience that maps to what this company does (or the job description, if provided).
 
 Output STRICT JSON:
 {
   "subject": "string",
-  "body": "string (one short paragraph + sign-off, with \\n between paragraph and sign-off)",
+  "body": "string (greeting line, blank line, ONE short paragraph, blank line, sign-off — separate the sections with \\n\\n exactly like the examples)",
   "rationale": "one sentence — which proof point you chose and why"
 }`;
 
-  return await chatJson<ColdEmailDraft>({
+  const draft = await chatJson<ColdEmailDraft>({
     system: SYSTEM,
     user: userPrompt,
     maxTokens: 4096,
     temperature: 0.7,
   });
+  return {
+    ...draft,
+    subject: deAi(draft.subject ?? ""),
+    body: formatBody(deAi(draft.body ?? "")),
+  };
+}
+
+// The model often flattens the email into one blob regardless of formatting
+// instructions — put the greeting and sign-off on their own lines ourselves.
+function formatBody(body: string): string {
+  return body
+    .trim()
+    .replace(/^((?:hi|hello|dear)[^,\n]{0,40},)\s*/i, "$1\n\n")
+    .replace(/\s+(best|best regards|regards|thanks|thank you|sincerely|cheers)\s*,\s*\n?\s*(\S[^\n]{0,40})\s*$/i, "\n\n$1,\n$2");
 }
