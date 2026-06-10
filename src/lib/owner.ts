@@ -4,7 +4,7 @@ export const owner = {
   phone: process.env.OWNER_PHONE ?? "+91 8407968503",
   github: process.env.OWNER_GITHUB ?? "https://github.com/varun-101",
   githubHandle: "varun-101",
-  linkedin: process.env.OWNER_LINKEDIN ?? "https://www.linkedin.com/in/varun-chandwani",
+  linkedin: process.env.OWNER_LINKEDIN ?? "https://www.linkedin.com/in/varun-chandwani101/",
   linkedinHandle: "Varun Chandwani",
   portfolio: process.env.OWNER_PORTFOLIO ?? "https://www.varun101.dev",
   city: process.env.OWNER_CITY ?? "Mumbai",
@@ -20,7 +20,7 @@ export const owner = {
     {
       title: "Backend Software Engineer Intern",
       company: "Loan for India",
-      period: "June 2025 – November 2025",
+      period: "June 2025 – May 2026",
       bullets: [
         "Built full-scale backend infrastructure to manage home loans for customers across Mumbai as one of two backend engineers.",
         "Collaborated with internal teams and external banking partners (HDFC, SBI) to automate loan approvals on behalf of partner banks.",

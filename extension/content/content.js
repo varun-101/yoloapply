@@ -699,6 +699,16 @@
     }
   }
 
+  // Show / hide the widget. Mounts it first if it isn't on the page yet.
+  async function toggleWidget() {
+    if (!widget) {
+      await mount(true);
+      return true;
+    }
+    widget.classList.toggle("yolo-hidden");
+    return !widget.classList.contains("yolo-hidden");
+  }
+
   // Listen for direct action requests from the popup/background.
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === "runAction" && msg.act) {
@@ -707,6 +717,10 @@
     }
     if (msg?.type === "showWidget") {
       mount(true).then((shown) => sendResponse({ ok: shown }));
+      return true;
+    }
+    if (msg?.type === "toggleWidget") {
+      toggleWidget().then((visible) => sendResponse({ ok: true, visible }));
       return true;
     }
     return false;

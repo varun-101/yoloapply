@@ -16,6 +16,32 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
   }
 });
 
+// Keyboard command: toggle the in-page widget (default Alt+Shift+Y).
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== "toggle-widget") return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || /^(chrome|edge|about|chrome-extension|view-source):/i.test(tab.url ?? "")) return;
+
+  const sendToggle = () =>
+    new Promise((resolve) => {
+      chrome.tabs.sendMessage(tab.id, { type: "toggleWidget" }, (r) => {
+        resolve(chrome.runtime.lastError ? { noReceiver: true } : r);
+      });
+    });
+
+  let r = await sendToggle();
+  if (r?.noReceiver) {
+    // Content script not loaded on this tab yet — inject it, then toggle.
+    try {
+      await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ["content/content.css"] });
+    } catch {}
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/content.js"] });
+      setTimeout(sendToggle, 250);
+    } catch {}
+  }
+});
+
 // Click the extension icon → open the popup (default behavior).
 // On install we also open the options page so the user can paste an API key.
 

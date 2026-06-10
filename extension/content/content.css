@@ -1,4 +1,36 @@
 /* ===== YOLOapply in-page widget — Warm Sunset theme (Expressive) ===== */
+
+/* Defensive reset: the widget lives in the host page's DOM (no shadow root),
+   so the job site's global CSS can bleed in and break layout — e.g. a global
+   `div { position: absolute }` or a tiny `line-height` makes text overlap.
+   Neutralize the layout-critical properties on every widget element. Our own
+   rules below have higher specificity (#id + .class) and re-apply the design. */
+#yoloapply-widget,
+#yoloapply-widget * {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  position: static;
+  float: none;
+  inset: auto;
+  max-width: none;
+  min-width: 0;
+  min-height: 0;
+  max-height: none;
+  line-height: 1.45;
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  text-indent: 0;
+  vertical-align: baseline;
+  white-space: normal;
+  word-spacing: normal;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  text-shadow: none;
+  transform: none;
+  list-style: none;
+}
+
 #yoloapply-widget {
   position: fixed;
   bottom: 20px;
@@ -50,6 +82,7 @@
 #yoloapply-widget .yolo-status.yolo-err { background: #FCEBE7; color: #B83A22; border-color: #F6CFC4; }
 #yoloapply-widget .yolo-status.yolo-info { background: linear-gradient(135deg, #FFEDE3 0%, #FFF3D9 100%); color: #E8542F; border-color: #F8D9B8; }
 #yoloapply-widget .yolo-small { font-size: 11px; color: #9C8678; }
+#yoloapply-widget .yolo-hidden { display: none !important; }
 .yolo-fill-glow { transition: box-shadow 0.6s ease, background-color 0.6s ease; box-shadow: 0 0 0 3px rgba(255, 107, 74, 0.4) !important; }
 
 /* Themed scrollbars — scoped to the widget so the host page is untouched. */
