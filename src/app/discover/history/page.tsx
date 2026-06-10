@@ -71,9 +71,9 @@ function duration(run: ScanRun): string {
 }
 
 function scoreColor(score: number): string {
-  if (score >= 75) return "bg-emerald-100 text-emerald-800";
-  if (score >= 50) return "bg-amber-100 text-amber-800";
-  return "bg-slate-100 text-slate-600";
+  if (score >= 75) return "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300";
+  if (score >= 50) return "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300";
+  return "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300";
 }
 
 export default function ScanHistoryPage() {
@@ -109,30 +109,30 @@ export default function ScanHistoryPage() {
       <div className="mb-6">
         <Link
           href="/discover"
-          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-2"
+          className="inline-flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 mb-2"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> Discover
         </Link>
         <h1 className="text-2xl font-semibold">Scan history</h1>
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-slate-500 dark:text-slate-400">
           Every discovery scan and the job listings it brought in. Leads ingested before history
           tracking aren&apos;t attached to a scan.
         </p>
       </div>
 
       {err && (
-        <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+        <div className="mb-4 rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950 px-3 py-2 text-sm text-rose-800 dark:text-rose-300">
           {err}
         </div>
       )}
 
       {scans === null ? (
-        <div className="p-12 text-center text-slate-400">
+        <div className="p-12 text-center text-slate-400 dark:text-slate-500">
           <Loader2 className="h-5 w-5 animate-spin inline" />
         </div>
       ) : scans.length === 0 ? (
         <Card>
-          <CardContent className="p-10 text-center text-sm text-slate-500">
+          <CardContent className="p-10 text-center text-sm text-slate-500 dark:text-slate-400">
             No scans recorded yet. Run <span className="font-medium">Scan now</span> on the
             Discover page.
           </CardContent>
@@ -149,33 +149,33 @@ export default function ScanHistoryPage() {
                   <button className="w-full text-left" onClick={() => toggle(run)}>
                     <div className="flex items-center gap-2 flex-wrap">
                       {open[run.id] ? (
-                        <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
+                        <ChevronDown className="h-4 w-4 text-slate-400 dark:text-slate-500 shrink-0" />
                       ) : (
-                        <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                        <ChevronRight className="h-4 w-4 text-slate-400 dark:text-slate-500 shrink-0" />
                       )}
                       <span className="font-medium">{when(run.startedAt)}</span>
-                      <span className="text-xs text-slate-400">{timeAgo(run.startedAt)}</span>
+                      <span className="text-xs text-slate-400 dark:text-slate-500">{timeAgo(run.startedAt)}</span>
                       <Badge
                         className={
                           failed
-                            ? "bg-rose-100 text-rose-800"
+                            ? "bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300"
                             : run.created > 0
-                              ? "bg-emerald-100 text-emerald-800"
-                              : "bg-slate-100 text-slate-600"
+                              ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300"
+                              : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
                         }
                       >
                         {failed ? "failed" : `${run.created} new lead${run.created === 1 ? "" : "s"}`}
                       </Badge>
-                      <Badge className="bg-slate-100 text-slate-600">
+                      <Badge className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                         {run.trigger === "script" ? "scheduled" : "manual"}
                       </Badge>
-                      <span className="text-xs text-slate-500">
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
                         {duration(run)}
                         {run.scored > 0 && ` · ${run.scored} scored`}
                       </span>
                     </div>
                     {stats.length > 0 && (
-                      <div className="mt-1 ml-6 text-xs text-slate-500">
+                      <div className="mt-1 ml-6 text-xs text-slate-500 dark:text-slate-400">
                         {stats
                           .map((s) =>
                             s.error && s.fetched === 0
@@ -186,31 +186,31 @@ export default function ScanHistoryPage() {
                       </div>
                     )}
                     {run.error && (
-                      <div className="mt-1 ml-6 text-xs text-rose-600">{run.error}</div>
+                      <div className="mt-1 ml-6 text-xs text-rose-600 dark:text-rose-400">{run.error}</div>
                     )}
                   </button>
 
                   {open[run.id] && (
-                    <div className="mt-3 ml-6 border-t border-slate-100 pt-3">
+                    <div className="mt-3 ml-6 border-t border-slate-100 dark:border-slate-800 pt-3">
                       {leads === "loading" || !leads ? (
-                        <div className="text-sm text-slate-400 py-2">
+                        <div className="text-sm text-slate-400 dark:text-slate-500 py-2">
                           <Loader2 className="h-4 w-4 animate-spin inline" /> Loading leads…
                         </div>
                       ) : leads.length === 0 ? (
-                        <div className="text-sm text-slate-400 py-1">
+                        <div className="text-sm text-slate-400 dark:text-slate-500 py-1">
                           No leads were added by this scan.
                         </div>
                       ) : (
                         <div className="space-y-1">
                           {leads.map((l) => (
                             <div key={l.id} className="flex items-center gap-2 text-sm flex-wrap">
-                              <Badge className="bg-amber-100 text-amber-800">
+                              <Badge className="bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
                                 {sourceLabel(l.source)}
                               </Badge>
                               <span className="font-medium">{l.company}</span>
-                              <span className="text-slate-600">· {l.role}</span>
+                              <span className="text-slate-600 dark:text-slate-300">· {l.role}</span>
                               {l.location && (
-                                <span className="text-xs text-slate-400">{l.location}</span>
+                                <span className="text-xs text-slate-400 dark:text-slate-500">{l.location}</span>
                               )}
                               {l.score !== null && (
                                 <Badge className={scoreColor(l.score)}>fit {l.score}</Badge>
@@ -220,14 +220,14 @@ export default function ScanHistoryPage() {
                                   <Link href={`/applications/${l.applicationId}`}>application</Link>
                                 </Button>
                               ) : l.status === "dismissed" ? (
-                                <span className="text-xs text-slate-400">dismissed</span>
+                                <span className="text-xs text-slate-400 dark:text-slate-500">dismissed</span>
                               ) : null}
                               {l.url && (
                                 <a
                                   href={l.url}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="inline-flex items-center gap-1 text-xs text-slate-500 hover:underline"
+                                  className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 hover:underline"
                                 >
                                   posting <ExternalLink className="h-3 w-3" />
                                 </a>

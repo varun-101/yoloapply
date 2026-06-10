@@ -94,12 +94,12 @@ export default function QuestionAnswerer({ applicationId }: { applicationId: str
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-indigo-600" />
+          <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
           Answer an open-ended question
         </CardTitle>
         {history.length > 0 && (
           <button
-            className="text-xs text-slate-500 hover:text-rose-600 hover:underline"
+            className="text-xs text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:underline"
             onClick={() => persist([])}
           >
             clear all
@@ -107,7 +107,7 @@ export default function QuestionAnswerer({ applicationId }: { applicationId: str
         )}
       </CardHeader>
       <CardContent className="space-y-3">
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
           Answers use this application&apos;s company, role, and job description as context, plus your profile and
           projects — so they&apos;re tailored, not generic.
         </p>
@@ -129,33 +129,33 @@ export default function QuestionAnswerer({ applicationId }: { applicationId: str
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             Generate answer
           </Button>
-          <span className="text-xs text-slate-400">Ctrl/⌘ + Enter</span>
+          <span className="text-xs text-slate-400 dark:text-slate-500">Ctrl/⌘ + Enter</span>
         </div>
 
         {err && (
-          <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>
+          <div className="rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">{err}</div>
         )}
 
         {history.length > 0 && (
           <ul className="space-y-3 pt-1">
             {history.map((item) => (
-              <li key={item.id} className="rounded-md border border-slate-200 p-3">
-                <div className="text-sm font-medium text-slate-800 mb-1">{item.question}</div>
-                <div className="whitespace-pre-wrap text-sm text-slate-700 rounded border border-slate-100 bg-slate-50 p-2 max-h-60 overflow-auto">
+              <li key={item.id} className="rounded-md border border-slate-200 dark:border-slate-800 p-3">
+                <div className="text-sm font-medium text-slate-800 dark:text-slate-200 mb-1">{item.question}</div>
+                <div className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-300 rounded border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-2 max-h-60 overflow-auto">
                   {item.answer}
                 </div>
                 {item.note && (
-                  <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                  <div className="mt-2 text-xs text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-900 rounded px-2 py-1">
                     {item.note}
                   </div>
                 )}
                 <div className="mt-2 flex items-center justify-between">
-                  <span className="text-xs text-slate-400">
+                  <span className="text-xs text-slate-400 dark:text-slate-500">
                     {item.confidence ? `confidence: ${item.confidence}` : ""}
                   </span>
                   <div className="flex items-center gap-2">
                     <button
-                      className="inline-flex items-center gap-1 text-xs text-slate-600 hover:text-indigo-600"
+                      className="inline-flex items-center gap-1 text-xs text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400"
                       onClick={() => copy(item)}
                     >
                       {copiedId === item.id ? (
@@ -169,7 +169,7 @@ export default function QuestionAnswerer({ applicationId }: { applicationId: str
                       )}
                     </button>
                     <button
-                      className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-rose-600"
+                      className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
                       onClick={() => remove(item.id)}
                     >
                       <Trash2 className="h-3 w-3" /> Delete

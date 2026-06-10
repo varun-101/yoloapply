@@ -30,9 +30,9 @@ interface Lead {
 }
 
 function scoreColor(score: number): string {
-  if (score >= 75) return "bg-emerald-100 text-emerald-800";
-  if (score >= 50) return "bg-amber-100 text-amber-800";
-  return "bg-slate-100 text-slate-600";
+  if (score >= 75) return "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300";
+  if (score >= 50) return "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300";
+  return "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300";
 }
 
 interface RunResult {
@@ -65,7 +65,7 @@ function sourceLabel(s: string): string {
 }
 
 const SELECT_CLS =
-  "h-9 rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-400";
+  "h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-sm text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400 dark:focus:ring-slate-600";
 
 export default function DiscoverPage() {
   const [leads, setLeads] = useState<Lead[] | null>(null);
@@ -191,14 +191,14 @@ export default function DiscoverPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold">Discover</h1>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
             Fresh postings from your trusted sources — apply early, get reviewed first.
           </p>
         </div>
         <div className="flex items-center gap-3">
           <Link
             href="/discover/history"
-            className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700"
+            className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
             title="Scan history"
           >
             <History className="h-3.5 w-3.5" />
@@ -214,12 +214,12 @@ export default function DiscoverPage() {
       </div>
 
       {scanMsg && (
-        <div className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+        <div className="mb-4 rounded-md border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300">
           {scanMsg}
         </div>
       )}
       {err && (
-        <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+        <div className="mb-4 rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950 px-3 py-2 text-sm text-rose-800 dark:text-rose-300">
           {err}
         </div>
       )}
@@ -261,12 +261,12 @@ export default function DiscoverPage() {
       </div>
 
       {leads === null ? (
-        <div className="p-12 text-center text-slate-400">
+        <div className="p-12 text-center text-slate-400 dark:text-slate-500">
           <Loader2 className="h-5 w-5 animate-spin inline" />
         </div>
       ) : leads.length === 0 ? (
         <Card>
-          <CardContent className="p-10 text-center text-sm text-slate-500">
+          <CardContent className="p-10 text-center text-sm text-slate-500 dark:text-slate-400">
             No leads match these filters. Hit <span className="font-medium">Scan now</span> to pull
             fresh postings.
           </CardContent>
@@ -280,9 +280,9 @@ export default function DiscoverPage() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium">{lead.company}</span>
-                      <span className="text-slate-600">· {lead.role}</span>
+                      <span className="text-slate-600 dark:text-slate-300">· {lead.role}</span>
                       {isFresh(lead.postedAt) && (
-                        <Badge className="bg-emerald-100 text-emerald-800">fresh</Badge>
+                        <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">fresh</Badge>
                       )}
                       {lead.score !== null && (
                         <Badge className={scoreColor(lead.score)} title={lead.scoreReason ?? undefined}>
@@ -290,8 +290,8 @@ export default function DiscoverPage() {
                         </Badge>
                       )}
                     </div>
-                    <div className="mt-1 text-xs text-slate-500 flex items-center gap-2 flex-wrap">
-                      <Badge className="bg-amber-100 text-amber-800">
+                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
+                      <Badge className="bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
                         {(lead.sources ?? lead.source).split(",").map(sourceLabel).join(" + ")}
                       </Badge>
                       {lead.jobType && <span>{lead.jobType}</span>}
@@ -303,19 +303,19 @@ export default function DiscoverPage() {
                           href={lead.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-slate-600 hover:underline"
+                          className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 hover:underline"
                         >
                           posting <ExternalLink className="h-3 w-3" />
                         </a>
                       ) : (
-                        <span className="text-rose-500">no link in source</span>
+                        <span className="text-rose-500 dark:text-rose-400">no link in source</span>
                       )}
                     </div>
                     {lead.scoreReason && (
-                      <div className="mt-1 text-xs text-slate-500 italic">{lead.scoreReason}</div>
+                      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400 italic">{lead.scoreReason}</div>
                     )}
                     {lead.skills && (
-                      <div className="mt-1 text-xs text-slate-400 truncate">{lead.skills}</div>
+                      <div className="mt-1 text-xs text-slate-400 dark:text-slate-500 truncate">{lead.skills}</div>
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -335,7 +335,7 @@ export default function DiscoverPage() {
                         </Link>
                       </Button>
                     ) : lead.status === "dismissed" ? (
-                      <Badge className="bg-slate-100 text-slate-500">dismissed</Badge>
+                      <Badge className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">dismissed</Badge>
                     ) : (
                       <>
                         {lead.jdText ? (

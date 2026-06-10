@@ -118,7 +118,7 @@ export default function NewApplication() {
       <Card className="mb-4">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-indigo-600" />
+            <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
             Auto-fill from a screenshot or URL
           </CardTitle>
         </CardHeader>
@@ -136,21 +136,21 @@ export default function NewApplication() {
               if (f) void uploadImage(f);
             }}
             disabled={extractingImage}
-            className="w-full rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 hover:border-slate-400 transition-colors px-4 py-6 text-sm text-slate-600 flex flex-col items-center gap-2 disabled:opacity-50"
+            className="w-full rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 hover:border-slate-400 dark:hover:border-slate-500 transition-colors px-4 py-6 text-sm text-slate-600 dark:text-slate-300 flex flex-col items-center gap-2 disabled:opacity-50"
           >
             {extractingImage ? (
               <>
-                <Loader2 className="h-5 w-5 animate-spin text-indigo-600" />
+                <Loader2 className="h-5 w-5 animate-spin text-indigo-600 dark:text-indigo-400" />
                 <span>Reading the screenshot with DeepSeek vision…</span>
-                <span className="text-xs text-slate-500">First call can take 5-15s; later calls are quicker.</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">First call can take 5-15s; later calls are quicker.</span>
               </>
             ) : (
               <>
-                <ImageIcon className="h-5 w-5 text-slate-500" />
+                <ImageIcon className="h-5 w-5 text-slate-500 dark:text-slate-400" />
                 <span>
                   <span className="font-medium">Click to upload</span> or drag a job-posting screenshot
                 </span>
-                <span className="text-xs text-slate-500">PNG / JPG — sent to DeepSeek vision to extract fields</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">PNG / JPG — sent to DeepSeek vision to extract fields</span>
               </>
             )}
           </button>
@@ -180,13 +180,13 @@ export default function NewApplication() {
           </div>
 
           {extract.kind === "ok" && (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            <div className="rounded-md border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
               Filled in fields from {extract.source === "image" ? "the screenshot" : "the URL"}. Review and edit
               below before saving.
             </div>
           )}
           {extract.kind === "err" && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <div className="rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
               {extract.msg}
             </div>
           )}
@@ -200,19 +200,19 @@ export default function NewApplication() {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-slate-500">Company</label>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Company</label>
               <Input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Anthropic" />
             </div>
             <div>
-              <label className="text-xs text-slate-500">Role</label>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Role</label>
               <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="Software Engineer, Backend" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-slate-500">Source</label>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Source</label>
               <select
-                className="flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
+                className="flex h-9 w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
               >
@@ -223,12 +223,12 @@ export default function NewApplication() {
               </select>
             </div>
             <div>
-              <label className="text-xs text-slate-500">Location</label>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Location</label>
               <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Remote / Bangalore" />
             </div>
           </div>
           <div>
-            <label className="text-xs text-slate-500">Job description</label>
+            <label className="text-xs text-slate-500 dark:text-slate-400">Job description</label>
             <Textarea
               rows={12}
               value={jdText}
@@ -237,7 +237,7 @@ export default function NewApplication() {
             />
           </div>
           {err && (
-            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>
+            <div className="rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">{err}</div>
           )}
           <div className="flex items-center gap-2 pt-2">
             <Button

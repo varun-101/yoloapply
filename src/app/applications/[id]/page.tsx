@@ -23,7 +23,7 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
-      <div className="mb-2 text-sm text-slate-500">
+      <div className="mb-2 text-sm text-slate-500 dark:text-slate-400">
         <Link href="/applications" className="hover:underline">
           ← All applications
         </Link>
@@ -31,12 +31,12 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold">{app.company}</h1>
-          <div className="text-slate-600">{app.role}</div>
+          <div className="text-slate-600 dark:text-slate-300">{app.role}</div>
           <div className="mt-2 flex items-center gap-2">
             <Badge className={statusColor(app.status)}>{app.status}</Badge>
-            <span className="text-xs text-slate-500">Created {formatDate(app.createdAt)}</span>
+            <span className="text-xs text-slate-500 dark:text-slate-400">Created {formatDate(app.createdAt)}</span>
             {app.appliedAt && (
-              <span className="text-xs text-slate-500">· Applied {formatDate(app.appliedAt)}</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">· Applied {formatDate(app.appliedAt)}</span>
             )}
           </div>
         </div>
@@ -77,13 +77,13 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
                   href={app.jdUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-sm text-indigo-600 hover:underline mb-2"
+                  className="inline-flex items-center gap-1 text-sm text-indigo-600 dark:text-indigo-400 hover:underline mb-2"
                 >
                   {app.jdUrl} <ExternalLink className="h-3 w-3" />
                 </a>
               )}
-              <div className="whitespace-pre-wrap text-sm text-slate-700 max-h-96 overflow-auto rounded border border-slate-100 p-3 bg-slate-50">
-                {app.jdText ?? <span className="text-slate-400">No JD text saved.</span>}
+              <div className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-300 max-h-96 overflow-auto rounded border border-slate-100 dark:border-slate-800 p-3 bg-slate-50 dark:bg-slate-950">
+                {app.jdText ?? <span className="text-slate-400 dark:text-slate-500">No JD text saved.</span>}
               </div>
             </CardContent>
           </Card>
@@ -106,13 +106,13 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
                 <CardTitle>Cover letter</CardTitle>
                 <a
                   href={`/api/applications/${app.id}/cover-letter?format=pdf&download=1`}
-                  className="text-sm text-indigo-600 hover:underline inline-flex items-center gap-1"
+                  className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-1"
                 >
                   <Download className="h-3 w-3" /> Download PDF
                 </a>
               </CardHeader>
               <CardContent>
-                <div className="whitespace-pre-wrap text-sm text-slate-700 max-h-96 overflow-auto rounded border border-slate-100 p-3 bg-slate-50">
+                <div className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-300 max-h-96 overflow-auto rounded border border-slate-100 dark:border-slate-800 p-3 bg-slate-50 dark:bg-slate-950">
                   {app.coverLetterText}
                 </div>
               </CardContent>
@@ -126,18 +126,18 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
               <CardTitle>Activity</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              <ul className="divide-y divide-slate-100">
+              <ul className="divide-y divide-slate-100 dark:divide-slate-800">
                 {app.events.map((e) => (
                   <li key={e.id} className="px-4 py-3 text-sm flex items-start gap-3">
-                    <Badge className="bg-slate-100 text-slate-700">{e.type}</Badge>
+                    <Badge className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">{e.type}</Badge>
                     <div className="flex-1">
-                      <div className="text-slate-700">{e.detail ?? ""}</div>
-                      <div className="text-xs text-slate-400 mt-0.5">{formatDate(e.createdAt)}</div>
+                      <div className="text-slate-700 dark:text-slate-300">{e.detail ?? ""}</div>
+                      <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{formatDate(e.createdAt)}</div>
                     </div>
                   </li>
                 ))}
                 {app.events.length === 0 && (
-                  <li className="p-6 text-center text-sm text-slate-400">No activity yet.</li>
+                  <li className="p-6 text-center text-sm text-slate-400 dark:text-slate-500">No activity yet.</li>
                 )}
               </ul>
             </CardContent>
@@ -151,12 +151,12 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               <Link
-                className="inline-flex items-center gap-1 text-indigo-600 hover:underline"
+                className="inline-flex items-center gap-1 text-indigo-600 dark:text-indigo-400 hover:underline"
                 href={`/cold-email?company=${encodeURIComponent(app.company)}&role=${encodeURIComponent(app.role)}&applicationId=${app.id}`}
               >
                 <Mail className="h-4 w-4" /> Draft cold email to a leader at {app.company}
               </Link>
-              <div className="text-xs text-slate-500">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
                 {app.emails.length} email{app.emails.length === 1 ? "" : "s"} drafted for this application.
               </div>
             </CardContent>
@@ -168,14 +168,14 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
             </CardHeader>
             <CardContent className="text-sm">
               {app.contacts.length === 0 ? (
-                <div className="text-slate-500">No contacts linked.</div>
+                <div className="text-slate-500 dark:text-slate-400">No contacts linked.</div>
               ) : (
                 <ul className="space-y-2">
                   {app.contacts.map((c) => (
-                    <li key={c.id} className="border-b border-slate-100 pb-2">
+                    <li key={c.id} className="border-b border-slate-100 dark:border-slate-800 pb-2">
                       <div className="font-medium">{c.name}</div>
-                      <div className="text-xs text-slate-600">{c.title}</div>
-                      {c.email && <div className="text-xs text-slate-500">{c.email}</div>}
+                      <div className="text-xs text-slate-600 dark:text-slate-300">{c.title}</div>
+                      {c.email && <div className="text-xs text-slate-500 dark:text-slate-400">{c.email}</div>}
                     </li>
                   ))}
                 </ul>

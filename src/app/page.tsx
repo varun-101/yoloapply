@@ -34,7 +34,7 @@ export default async function Dashboard() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-semibold">Dashboard</h1>
-          <p className="text-sm text-slate-500 mt-1">Track applications, personalize resumes, send outreach.</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Track applications, personalize resumes, send outreach.</p>
         </div>
         <Button asChild>
           <Link href="/applications/new">
@@ -55,13 +55,13 @@ export default async function Dashboard() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Recent applications</CardTitle>
-          <Link href="/applications" className="text-sm text-slate-600 hover:underline flex items-center gap-1">
+          <Link href="/applications" className="text-sm text-slate-600 dark:text-slate-300 hover:underline flex items-center gap-1">
             View all <ArrowRight className="h-3 w-3" />
           </Link>
         </CardHeader>
         <CardContent className="p-0">
           {apps.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500">
+            <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">
               No applications yet.{" "}
               <Link className="underline" href="/applications/new">
                 Start by adding one.
@@ -69,7 +69,7 @@ export default async function Dashboard() {
             </div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase text-slate-500 border-b border-slate-100">
+              <thead className="text-left text-xs uppercase text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
                 <tr>
                   <th className="px-4 py-3">Company</th>
                   <th className="px-4 py-3">Role</th>
@@ -81,16 +81,16 @@ export default async function Dashboard() {
               </thead>
               <tbody>
                 {apps.map((a) => (
-                  <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <tr key={a.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900">
                     <td className="px-4 py-3 font-medium">{a.company}</td>
                     <td className="px-4 py-3">{a.role}</td>
-                    <td className="px-4 py-3 text-slate-600">{a.source}</td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{a.source}</td>
                     <td className="px-4 py-3">
                       <Badge className={statusColor(a.status)}>{a.status}</Badge>
                     </td>
-                    <td className="px-4 py-3 text-slate-500">{formatDate(a.createdAt)}</td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{formatDate(a.createdAt)}</td>
                     <td className="px-4 py-3 text-right">
-                      <Link href={`/applications/${a.id}`} className="text-slate-600 hover:underline">
+                      <Link href={`/applications/${a.id}`} className="text-slate-600 dark:text-slate-300 hover:underline">
                         Open
                       </Link>
                     </td>
@@ -110,7 +110,7 @@ function StatCard({ label, value }: { label: string; value: number }) {
     <Card>
       <CardContent className="p-4">
         <div className="text-2xl font-semibold">{value}</div>
-        <div className="text-xs text-slate-500 mt-1">{label}</div>
+        <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{label}</div>
       </CardContent>
     </Card>
   );

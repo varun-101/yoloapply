@@ -106,7 +106,7 @@ function ColdEmailInner() {
   return (
     <div className="p-8 max-w-5xl mx-auto">
       <h1 className="text-2xl font-semibold mb-1">Cold Outreach</h1>
-      <p className="text-sm text-slate-500 mb-6">
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
         Draft a sharp, specific email to a founder, CEO, or tech lead — then send it from your account.
       </p>
 
@@ -117,21 +117,21 @@ function ColdEmailInner() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div>
-              <label className="text-xs text-slate-500">Company</label>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Company</label>
               <Input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Anthropic" />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-xs text-slate-500">Recipient name</label>
+                <label className="text-xs text-slate-500 dark:text-slate-400">Recipient name</label>
                 <Input value={recipientName} onChange={(e) => setRecipientName(e.target.value)} placeholder="Dario Amodei" />
               </div>
               <div>
-                <label className="text-xs text-slate-500">Title</label>
+                <label className="text-xs text-slate-500 dark:text-slate-400">Title</label>
                 <Input value={recipientTitle} onChange={(e) => setRecipientTitle(e.target.value)} placeholder="CEO / Head of Eng" />
               </div>
             </div>
             <div>
-              <label className="text-xs text-slate-500">Recipient email</label>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Recipient email</label>
               <Input
                 type="email"
                 value={recipientEmail}
@@ -140,11 +140,11 @@ function ColdEmailInner() {
               />
             </div>
             <div>
-              <label className="text-xs text-slate-500">Role they&apos;re hiring for (optional)</label>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Role they&apos;re hiring for (optional)</label>
               <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="Backend Software Engineer" />
             </div>
             <div>
-              <label className="text-xs text-slate-500">Hook / context (recent news, product, etc.)</label>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Hook / context (recent news, product, etc.)</label>
               <Textarea
                 rows={3}
                 value={hookContext}
@@ -157,7 +157,7 @@ function ColdEmailInner() {
               Draft email
             </Button>
             {rationale && (
-              <div className="rounded-md bg-indigo-50 border border-indigo-100 px-3 py-2 text-xs text-indigo-900">
+              <div className="rounded-md bg-indigo-50 dark:bg-indigo-950 border border-indigo-100 dark:border-indigo-900 px-3 py-2 text-xs text-indigo-900 dark:text-indigo-200">
                 <span className="font-medium">Hook:</span> {rationale}
               </div>
             )}
@@ -170,14 +170,14 @@ function ColdEmailInner() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div>
-              <label className="text-xs text-slate-500">Subject</label>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Subject</label>
               <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
             </div>
             <div>
-              <label className="text-xs text-slate-500">Body</label>
+              <label className="text-xs text-slate-500 dark:text-slate-400">Body</label>
               <Textarea rows={12} value={emailBody} onChange={(e) => setEmailBody(e.target.value)} />
             </div>
-            <label className="flex items-start gap-2 text-sm text-slate-700">
+            <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
               <input
                 type="checkbox"
                 className="mt-1"
@@ -186,13 +186,13 @@ function ColdEmailInner() {
               />
               <span>
                 Attach resume.{" "}
-                <span className="text-slate-500">
+                <span className="text-slate-500 dark:text-slate-400">
                   {applicationId
                     ? "Personalized PDF will be used (falls back to the generic resume if no personalized version exists)."
                     : hasGenericResume === false ? (
                         <>
                           No generic resume uploaded yet —{" "}
-                          <Link href="/resume" className="underline text-indigo-600">
+                          <Link href="/resume" className="underline text-indigo-600 dark:text-indigo-400">
                             upload one
                           </Link>{" "}
                           to attach it to every cold email.
@@ -204,7 +204,7 @@ function ColdEmailInner() {
               </span>
             </label>
             {applicationId && (
-              <label className="flex items-start gap-2 text-sm text-slate-700">
+              <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
                 <input
                   type="checkbox"
                   className="mt-1"
@@ -213,15 +213,15 @@ function ColdEmailInner() {
                 />
                 <span>
                   Attach cover letter.{" "}
-                  <span className="text-slate-500">
+                  <span className="text-slate-500 dark:text-slate-400">
                     Uses the cover letter generated for this application (generate it on the application page first).
                   </span>
                 </span>
               </label>
             )}
 
-            {err && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}
-            {ok && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{ok}</div>}
+            {err && <div className="rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">{err}</div>}
+            {ok && <div className="rounded-md border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">{ok}</div>}
 
             <Button
               onClick={send}

@@ -130,24 +130,24 @@ export default function ApplicationActions(props: {
         </div>
 
         {err && (
-          <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>
+          <div className="rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">{err}</div>
         )}
         {props.personalizeStatus === "running" && (
-          <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-700 flex items-center gap-2">
+          <div className="rounded-md border border-indigo-200 dark:border-indigo-900 bg-indigo-50 dark:bg-indigo-950 px-3 py-2 text-sm text-indigo-700 dark:text-indigo-300 flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" /> Personalizing resume in the background… this keeps running even
             if you refresh or close this tab.
           </div>
         )}
         {props.personalizeStatus === "failed" && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <div className="rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
             The last personalize attempt failed. Click “Re-personalize resume” to try again.
           </div>
         )}
 
         <div className="flex items-center gap-2 text-sm pt-2">
-          <span className="text-slate-500">Status</span>
+          <span className="text-slate-500 dark:text-slate-400">Status</span>
           <select
-            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
+            className="rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-sm"
             value={props.status}
             onChange={(e) => setStatus(e.target.value)}
           >
@@ -160,12 +160,12 @@ export default function ApplicationActions(props: {
         </div>
 
         {!props.hasJd && (
-          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+          <div className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-900 rounded px-2 py-1">
             Add at least a paragraph of JD text before personalizing.
           </div>
         )}
         {!props.applyUrl && (
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-slate-500 dark:text-slate-400">
             Add an <code>applyUrl</code> (the actual portal URL) to enable auto-apply.
           </div>
         )}

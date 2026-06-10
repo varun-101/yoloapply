@@ -64,7 +64,7 @@ export default function ResumePage() {
   return (
     <div className="p-8 max-w-3xl mx-auto">
       <h1 className="text-2xl font-semibold mb-1">Generic Resume</h1>
-      <p className="text-sm text-slate-500 mb-6">
+      <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
         This PDF is attached to every cold email <em>unless</em> a personalized resume has been generated for
         the linked application.
       </p>
@@ -75,14 +75,14 @@ export default function ResumePage() {
         </CardHeader>
         <CardContent>
           {info === null ? (
-            <div className="text-sm text-slate-500">Loading…</div>
+            <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>
           ) : info.exists ? (
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
-                <FileText className="h-8 w-8 text-rose-600 shrink-0" />
+                <FileText className="h-8 w-8 text-rose-600 dark:text-rose-400 shrink-0" />
                 <div className="min-w-0">
                   <div className="font-medium truncate">Varun_Chandwani_Resume.pdf</div>
-                  <div className="text-xs text-slate-500">
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
                     {bytes(info.size ?? 0)} · uploaded {info.uploadedAt ? new Date(info.uploadedAt).toLocaleString() : "—"}
                   </div>
                 </div>
@@ -104,7 +104,7 @@ export default function ResumePage() {
               </div>
             </div>
           ) : (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <div className="rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
               No generic resume uploaded yet — cold emails will go out without an attachment until you upload one.
             </div>
           )}
@@ -129,20 +129,20 @@ export default function ResumePage() {
               if (f) void upload(f);
             }}
             disabled={busy !== null}
-            className="w-full rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 hover:border-slate-400 transition-colors px-4 py-8 text-sm text-slate-600 flex flex-col items-center gap-2 disabled:opacity-50"
+            className="w-full rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 hover:bg-slate-100 dark:hover:bg-slate-800 hover:border-slate-400 dark:hover:border-slate-500 transition-colors px-4 py-8 text-sm text-slate-600 dark:text-slate-300 flex flex-col items-center gap-2 disabled:opacity-50"
           >
             {busy === "upload" ? (
               <>
-                <Loader2 className="h-5 w-5 animate-spin text-indigo-600" />
+                <Loader2 className="h-5 w-5 animate-spin text-indigo-600 dark:text-indigo-400" />
                 <span>Uploading…</span>
               </>
             ) : (
               <>
-                <Upload className="h-5 w-5 text-slate-500" />
+                <Upload className="h-5 w-5 text-slate-500 dark:text-slate-400" />
                 <span>
                   <span className="font-medium">Click to upload</span> or drag a PDF here
                 </span>
-                <span className="text-xs text-slate-500">PDF only, up to 10 MB</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">PDF only, up to 10 MB</span>
               </>
             )}
           </button>
@@ -158,7 +158,7 @@ export default function ResumePage() {
             }}
           />
           {err && (
-            <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>
+            <div className="mt-3 rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">{err}</div>
           )}
         </CardContent>
       </Card>
