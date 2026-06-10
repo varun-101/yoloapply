@@ -169,7 +169,7 @@ ${skillsBlock}
 \section{Experience}
 \resumeSubHeadingListStart
 \resumeSubheading
-  {Backend Software Engineer Intern}{June 2025 -- November 2025}
+  {Backend Software Engineer Intern}{June 2025 -- May 2026}
   {Loan for India}{Mumbai, India}
   \resumeItemListStart
 ${experienceBullets}
