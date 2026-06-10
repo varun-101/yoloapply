@@ -371,6 +371,91 @@
   let statusEl;
   const state = { job: null, applicationId: null };
 
+  // ---- drag / resize / position memory ----
+  // Default anchor is top-right (CSS). Dragging the header moves the widget;
+  // the native CSS resize handle (bottom-right corner) resizes it. Both are
+  // remembered in chrome.storage.local so the widget stays put across pages.
+  const BOX_KEY = "widgetBox";
+
+  function applyBox(el, box) {
+    const width = Math.min(box.width ?? el.offsetWidth, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(box.left, window.innerWidth - 90));
+    const top = Math.max(8, Math.min(box.top, window.innerHeight - 56));
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+    el.style.right = "auto";
+    el.style.bottom = "auto";
+    if (box.width) el.style.width = width + "px";
+    if (box.height) el.style.height = Math.min(box.height, window.innerHeight - 16) + "px";
+  }
+
+  function saveBox(el, includeSize) {
+    const r = el.getBoundingClientRect();
+    chrome.storage.local.get(BOX_KEY, (items) => {
+      const prev = items?.[BOX_KEY] ?? {};
+      const next = { ...prev, left: r.left, top: r.top };
+      if (includeSize) {
+        next.width = r.width;
+        next.height = r.height;
+      }
+      chrome.storage.local.set({ [BOX_KEY]: next });
+    });
+  }
+
+  function initWidgetBox(el) {
+    chrome.storage.local.get(BOX_KEY, (items) => {
+      const box = items?.[BOX_KEY];
+      if (box && typeof box.left === "number" && typeof box.top === "number") applyBox(el, box);
+    });
+
+    const head = el.querySelector(".yolo-head");
+    let drag = null;
+    head.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || e.target.closest(".yolo-close")) return;
+      const r = el.getBoundingClientRect();
+      drag = { x: e.clientX, y: e.clientY, left: r.left, top: r.top, moved: false };
+      // Switch from right-anchored to left/top so movement math is direct.
+      el.style.left = r.left + "px";
+      el.style.top = r.top + "px";
+      el.style.right = "auto";
+      el.style.bottom = "auto";
+      head.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    head.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const left = Math.max(0, Math.min(drag.left + e.clientX - drag.x, window.innerWidth - 90));
+      const top = Math.max(0, Math.min(drag.top + e.clientY - drag.y, window.innerHeight - 48));
+      el.style.left = left + "px";
+      el.style.top = top + "px";
+      drag.moved = true;
+    });
+    const endDrag = () => {
+      if (drag?.moved) saveBox(el, false);
+      drag = null;
+    };
+    head.addEventListener("pointerup", endDrag);
+    head.addEventListener("pointercancel", endDrag);
+
+    // Native CSS resize fires no event, and the browser swallows the pointerup
+    // on the element while resizing — so record the size on pointerdown and
+    // compare on the next window-level pointerup (capture phase sees it).
+    let sizeAtDown = null;
+    el.addEventListener("pointerdown", () => {
+      sizeAtDown = { w: el.offsetWidth, h: el.offsetHeight };
+    });
+    window.addEventListener(
+      "pointerup",
+      () => {
+        if (sizeAtDown && (el.offsetWidth !== sizeAtDown.w || el.offsetHeight !== sizeAtDown.h)) {
+          saveBox(el, true);
+        }
+        sizeAtDown = null;
+      },
+      true
+    );
+  }
+
   function ui() {
     if (widget) return widget;
     widget = document.createElement("div");
@@ -394,6 +479,7 @@
       </div>
     `;
     document.documentElement.appendChild(widget);
+    initWidgetBox(widget);
 
     widget.querySelector(".yolo-close").addEventListener("click", () => widget.classList.add("yolo-hidden"));
     statusEl = widget.querySelector('[data-role="status"]');
