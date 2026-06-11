@@ -1,10 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 // The inline script in layout.tsx applies the saved theme before first paint;
-// this component just reflects and flips it.
-export function ThemeToggle() {
+// this component just reflects and flips it. It always sits on the dark rail,
+// so its colors don't vary by theme.
+export function ThemeToggle({ compact = false }: { compact?: boolean }) {
   const [dark, setDark] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -22,21 +24,32 @@ export function ThemeToggle() {
     setDark(next);
   }
 
+  const icon =
+    dark === null || dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />;
+
+  if (compact) {
+    return (
+      <button
+        onClick={toggle}
+        title="Switch theme"
+        className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-white/[0.06] hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70"
+      >
+        {icon}
+      </button>
+    );
+  }
+
   return (
     <button
       onClick={toggle}
-      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-      title="Toggle dark mode"
-    >
-      {/* Render both until mounted so SSR markup matches either theme. */}
-      {dark === null ? (
-        <Sun className="h-4 w-4" />
-      ) : dark ? (
-        <Sun className="h-4 w-4" />
-      ) : (
-        <Moon className="h-4 w-4" />
+      className={cn(
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-slate-400",
+        "hover:bg-white/[0.06] hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70"
       )}
-      <span>{dark ? "Light mode" : "Dark mode"}</span>
+      title="Switch theme"
+    >
+      {icon}
+      <span>{dark ? "Switch to light" : "Switch to dark"}</span>
     </button>
   );
 }

@@ -1,10 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { SOURCE_LABEL } from "@/lib/discovery/types";
+import { SCAN_STALE_MS, SOURCE_LABEL } from "@/lib/discovery/types";
 import { ArrowLeft, ChevronDown, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
 
 interface ScanRun {
@@ -64,10 +64,18 @@ function timeAgo(iso: string): string {
   return days === 1 ? "1 day ago" : `${days} days ago`;
 }
 
+// An open run (finishedAt null) is in flight if it started recently; older
+// open rows belong to a process that died mid-run.
+function isRunning(run: ScanRun): boolean {
+  return !run.finishedAt && Date.now() - new Date(run.startedAt).getTime() < SCAN_STALE_MS;
+}
+
 function duration(run: ScanRun): string {
-  if (!run.finishedAt) return "did not finish";
-  const s = Math.round((new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) / 1000);
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  if (!run.finishedAt && !isRunning(run)) return "did not finish";
+  const end = run.finishedAt ? new Date(run.finishedAt).getTime() : Date.now();
+  const s = Math.round((end - new Date(run.startedAt).getTime()) / 1000);
+  const txt = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  return run.finishedAt ? txt : `${txt} so far`;
 }
 
 function scoreColor(score: number): string {
@@ -82,12 +90,23 @@ export default function ScanHistoryPage() {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [leadsByScan, setLeadsByScan] = useState<Record<string, ScanLead[] | "loading">>({});
 
-  useEffect(() => {
-    fetch("/api/discovery/scans")
+  const loadScans = useCallback(() => {
+    return fetch("/api/discovery/scans")
       .then((r) => r.json())
       .then(setScans)
       .catch((e) => setErr(String(e)));
   }, []);
+
+  useEffect(() => {
+    loadScans();
+  }, [loadScans]);
+
+  // Live-update the list while a scan is in flight.
+  useEffect(() => {
+    if (!scans?.some(isRunning)) return;
+    const id = setInterval(loadScans, 5000);
+    return () => clearInterval(id);
+  }, [scans, loadScans]);
 
   async function toggle(run: ScanRun) {
     const next = !open[run.id];
@@ -142,7 +161,9 @@ export default function ScanHistoryPage() {
           {scans.map((run) => {
             const stats: SourceStat[] = run.sourceStats ? JSON.parse(run.sourceStats) : [];
             const leads = leadsByScan[run.id];
-            const failed = !run.finishedAt || (run.error && run.created === 0 && !run.sourceStats);
+            const running = isRunning(run);
+            const failed =
+              !running && (!run.finishedAt || (run.error && run.created === 0 && !run.sourceStats));
             return (
               <Card key={run.id}>
                 <CardContent className="p-4">
@@ -155,17 +176,23 @@ export default function ScanHistoryPage() {
                       )}
                       <span className="font-medium">{when(run.startedAt)}</span>
                       <span className="text-xs text-slate-400 dark:text-slate-500">{timeAgo(run.startedAt)}</span>
-                      <Badge
-                        className={
-                          failed
-                            ? "bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300"
-                            : run.created > 0
-                              ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300"
-                              : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
-                        }
-                      >
-                        {failed ? "failed" : `${run.created} new lead${run.created === 1 ? "" : "s"}`}
-                      </Badge>
+                      {running ? (
+                        <Badge className="bg-indigo-100 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-300">
+                          <Loader2 className="h-3 w-3 animate-spin mr-1" /> running
+                        </Badge>
+                      ) : (
+                        <Badge
+                          className={
+                            failed
+                              ? "bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300"
+                              : run.created > 0
+                                ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300"
+                                : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+                          }
+                        >
+                          {failed ? "failed" : `${run.created} new lead${run.created === 1 ? "" : "s"}`}
+                        </Badge>
+                      )}
                       <Badge className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                         {run.trigger === "script" ? "scheduled" : "manual"}
                       </Badge>

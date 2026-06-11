@@ -29,7 +29,7 @@ export default async function AppsList() {
             <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">No applications yet.</div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
+              <thead className="text-left font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
                 <tr>
                   <th className="px-4 py-3">Company</th>
                   <th className="px-4 py-3">Role</th>
@@ -51,9 +51,9 @@ export default async function AppsList() {
                     <td className="px-4 py-3">
                       <Badge className={statusColor(a.status)}>{a.status}</Badge>
                     </td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{a.source}</td>
-                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{formatDate(a.appliedAt)}</td>
-                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{formatDate(a.createdAt)}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">{a.source}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">{formatDate(a.appliedAt)}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">{formatDate(a.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>

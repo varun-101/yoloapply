@@ -4,42 +4,81 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    --background: 224 47% 97%;
+    --foreground: 227 46% 8%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --primary: 222 47% 11%;
-    --primary-foreground: 210 40% 98%;
-    --accent: 210 40% 96%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
+    --card-foreground: 227 46% 8%;
+    --muted: 223 38% 94%;
+    --muted-foreground: 226 20% 46%;
+    --primary: 40 100% 57%;
+    --primary-foreground: 227 46% 8%;
+    --accent: 223 38% 94%;
+    --accent-foreground: 227 46% 8%;
+    --destructive: 350 84% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 30% 88%;
+    --input: 222 28% 84%;
   }
   .dark {
-    --background: 222 47% 6%;
-    --foreground: 210 40% 98%;
-    --card: 222 47% 8%;
-    --card-foreground: 210 40% 98%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222 47% 11%;
-    --accent: 217 33% 17%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217 33% 17%;
-    --input: 217 33% 17%;
+    --background: 227 46% 8%;
+    --foreground: 224 47% 97%;
+    --card: 226 38% 14%;
+    --card-foreground: 224 47% 97%;
+    --muted: 226 32% 20%;
+    --muted-foreground: 225 22% 62%;
+    --primary: 40 100% 57%;
+    --primary-foreground: 227 46% 8%;
+    --destructive: 350 60% 40%;
+    --destructive-foreground: 0 0% 100%;
+    --accent: 226 32% 20%;
+    --accent-foreground: 224 47% 97%;
+    --border: 226 32% 20%;
+    --input: 226 32% 20%;
   }
 }
 
 @layer base {
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  /* Headings carry the display face everywhere — pages don't opt in. */
+  h1,
+  h2,
+  h3 {
+    @apply font-display tracking-tight;
+  }
+  ::selection {
+    @apply bg-signal text-slate-950;
+  }
+}
+
+/* Quiet, ink-toned scrollbars. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(226 20% 65% / 0.45);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: hsl(226 25% 30% / 0.9);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -29,15 +29,73 @@ interface Lead {
   createdAt: string;
 }
 
-function scoreColor(score: number): string {
-  if (score >= 75) return "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300";
-  if (score >= 50) return "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300";
-  return "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300";
+// Fit rendered as telemetry: five segments, one per 20 points.
+function FitMeter({ score, reason }: { score: number; reason: string | null }) {
+  const filled = Math.max(0, Math.min(5, Math.round(score / 20)));
+  const tone =
+    score >= 75
+      ? "bg-emerald-500 dark:bg-emerald-400"
+      : score >= 50
+      ? "bg-amber-500 dark:bg-amber-400"
+      : "bg-slate-400 dark:bg-slate-500";
+  const text =
+    score >= 75
+      ? "text-emerald-700 dark:text-emerald-400"
+      : score >= 50
+      ? "text-amber-700 dark:text-amber-400"
+      : "text-slate-500 dark:text-slate-400";
+  return (
+    <span
+      className="inline-flex items-center gap-1.5"
+      title={reason ?? `Fit score ${score}/100`}
+    >
+      <span className="flex items-center gap-px">
+        {Array.from({ length: 5 }, (_, i) => (
+          <span
+            key={i}
+            className={`h-2.5 w-1 rounded-[1px] ${i < filled ? tone : "bg-slate-200 dark:bg-slate-700"}`}
+          />
+        ))}
+      </span>
+      <span className={`font-mono text-[11px] font-medium ${text}`}>fit {score}</span>
+    </span>
+  );
 }
 
-interface RunResult {
+interface SourceStat {
+  source: string;
+  fetched: number;
   created: number;
-  sources: { source: string; fetched: number; created: number; duplicates: number; alreadyApplied: number; error?: string }[];
+  duplicates: number;
+  alreadyApplied: number;
+  error?: string;
+}
+
+interface ScanProgress {
+  scanRunId: string | null;
+  startedAt: string;
+  trigger: string;
+  phase: string;
+  sourcesDone: number;
+  sourcesTotal: number;
+  created: number;
+}
+
+interface ScanStatus {
+  status: "running" | "idle";
+  progress?: ScanProgress;
+  lastRun?: {
+    id: string;
+    created: number;
+    scored: number;
+    sourceStats: string | null;
+    error: string | null;
+  } | null;
+}
+
+function elapsed(iso: string): string {
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
 function timeAgo(iso: string | null): string {
@@ -65,7 +123,7 @@ function sourceLabel(s: string): string {
 }
 
 const SELECT_CLS =
-  "h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-sm text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-400 dark:focus:ring-slate-600";
+  "h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-sm text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-signal/70";
 
 export default function DiscoverPage() {
   const [leads, setLeads] = useState<Lead[] | null>(null);
@@ -75,7 +133,11 @@ export default function DiscoverPage() {
   const [days, setDays] = useState("");
   const [sort, setSort] = useState("trust");
   const [scanning, setScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
+  // Id of the run we're watching, so a completion message is only shown for
+  // that run (not a stale older one if the server restarted mid-scan).
+  const scanRunIdRef = useRef<string | null>(null);
   const [busyLead, setBusyLead] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [lastScan, setLastScan] = useState<LastScan | null>(null);
@@ -108,25 +170,80 @@ export default function DiscoverPage() {
     load().catch((e) => setErr(String(e)));
   }, [load]);
 
+  // On page load, restore the progress UI if a scan is already in flight
+  // (started before a refresh, or by the scheduled task).
+  useEffect(() => {
+    fetch("/api/discovery/run")
+      .then((r) => r.json())
+      .then((d: ScanStatus) => {
+        if (d.status === "running" && d.progress) {
+          setScanProgress(d.progress);
+          if (d.progress.scanRunId) scanRunIdRef.current = d.progress.scanRunId;
+          setScanning(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Poll for live progress while a scan runs; show the result when it ends.
+  useEffect(() => {
+    if (!scanning) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch("/api/discovery/run");
+        const data: ScanStatus = await res.json();
+        if (cancelled) return;
+        if (data.status === "running" && data.progress) {
+          setScanProgress(data.progress);
+          if (data.progress.scanRunId) scanRunIdRef.current = data.progress.scanRunId;
+          return;
+        }
+        setScanning(false);
+        setScanProgress(null);
+        const expected = scanRunIdRef.current;
+        scanRunIdRef.current = null;
+        const last = data.lastRun;
+        if (last && (!expected || last.id === expected)) {
+          if (last.error && !last.sourceStats) {
+            setErr(`Scan failed: ${last.error}`);
+          } else {
+            const stats: SourceStat[] = last.sourceStats ? JSON.parse(last.sourceStats) : [];
+            const parts = stats.map((s) =>
+              s.error && s.fetched === 0
+                ? `${sourceLabel(s.source)}: failed (${s.error})`
+                : `${sourceLabel(s.source)}: ${s.created} new of ${s.fetched}${s.error ? " (some boards failed)" : ""}`
+            );
+            setScanMsg(`${last.created} new lead${last.created === 1 ? "" : "s"} — ${parts.join(" · ")}`);
+          }
+        } else if (expected) {
+          setErr("The scan did not finish — the server may have restarted mid-run. Check the scan history.");
+        }
+        await Promise.all([load(), loadLastScan()]);
+      } catch {
+        // Transient poll failure (e.g. dev server restarting) — keep trying.
+      }
+    };
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [scanning, load, loadLastScan]);
+
   async function scan() {
-    setScanning(true);
     setErr(null);
     setScanMsg(null);
     try {
       const res = await fetch("/api/discovery/run", { method: "POST" });
-      const data: RunResult & { error?: string } = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Scan failed");
-      const parts = data.sources.map((s) =>
-        s.error && s.fetched === 0
-          ? `${sourceLabel(s.source)}: failed (${s.error})`
-          : `${sourceLabel(s.source)}: ${s.created} new of ${s.fetched}${s.error ? " (some boards failed)" : ""}`
-      );
-      setScanMsg(`${data.created} new lead${data.created === 1 ? "" : "s"} — ${parts.join(" · ")}`);
-      await Promise.all([load(), loadLastScan()]);
+      const data: { status: string; progress?: ScanProgress; error?: string } = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Scan failed to start");
+      if (data.progress?.scanRunId) scanRunIdRef.current = data.progress.scanRunId;
+      setScanProgress(data.progress ?? null);
+      setScanning(true);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setScanning(false);
     }
   }
 
@@ -188,23 +305,26 @@ export default function DiscoverPage() {
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-semibold">Discover</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1.5">
+            Lead radar · sheet + jobfound + ats boards + hn
+          </div>
+          <h1 className="text-3xl font-semibold">Discover</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1.5">
             Fresh postings from your trusted sources — apply early, get reviewed first.
           </p>
         </div>
         <div className="flex items-center gap-3">
           <Link
             href="/discover/history"
-            className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
+            className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
             title="Scan history"
           >
             <History className="h-3.5 w-3.5" />
             {lastScan
-              ? `Last scan ${timeAgo(lastScan.finishedAt ?? lastScan.startedAt)} · ${lastScan.created} new`
-              : "Scan history"}
+              ? `last sweep ${timeAgo(lastScan.finishedAt ?? lastScan.startedAt)} · ${lastScan.created} new`
+              : "scan history"}
           </Link>
           <Button onClick={scan} disabled={scanning}>
             {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RadarIcon className="h-4 w-4" />}
@@ -213,6 +333,24 @@ export default function DiscoverPage() {
         </div>
       </div>
 
+      {scanning && (
+        <div className="relative mb-4 flex items-center gap-2 overflow-hidden rounded-md border border-signal/40 bg-signal/10 px-3 py-2 text-sm text-amber-800 dark:text-signal">
+          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+          <span className="absolute inset-x-0 bottom-0 h-0.5">
+            <span className="absolute h-full w-1/4 animate-sweep rounded-full bg-signal" />
+          </span>
+          <span>
+            Scan in progress
+            {scanProgress?.trigger === "script" ? " (started by the scheduled task)" : ""} —{" "}
+            {scanProgress?.phase ?? "starting"}
+            {scanProgress?.phase === "fetching sources" &&
+              ` (${scanProgress.sourcesDone}/${scanProgress.sourcesTotal} sources done)`}
+            {scanProgress && scanProgress.created > 0 &&
+              ` · ${scanProgress.created} new lead${scanProgress.created === 1 ? "" : "s"} so far`}
+            {scanProgress && ` · running for ${elapsed(scanProgress.startedAt)}`}
+          </span>
+        </div>
+      )}
       {scanMsg && (
         <div className="mb-4 rounded-md border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300">
           {scanMsg}
@@ -282,16 +420,15 @@ export default function DiscoverPage() {
                       <span className="font-medium">{lead.company}</span>
                       <span className="text-slate-600 dark:text-slate-300">· {lead.role}</span>
                       {isFresh(lead.postedAt) && (
-                        <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">fresh</Badge>
-                      )}
-                      {lead.score !== null && (
-                        <Badge className={scoreColor(lead.score)} title={lead.scoreReason ?? undefined}>
-                          fit {lead.score}
+                        <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                          <span className="mr-1 h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
+                          fresh
                         </Badge>
                       )}
+                      {lead.score !== null && <FitMeter score={lead.score} reason={lead.scoreReason} />}
                     </div>
-                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
-                      <Badge className="bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                    <div className="mt-1.5 font-mono text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-2.5 flex-wrap">
+                      <Badge className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                         {(lead.sources ?? lead.source).split(",").map(sourceLabel).join(" + ")}
                       </Badge>
                       {lead.jobType && <span>{lead.jobType}</span>}

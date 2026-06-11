@@ -15,11 +15,12 @@ function ColdEmailInner() {
   const [recipientEmail, setRecipientEmail] = useState(sp.get("email") ?? "");
   const [role, setRole] = useState(sp.get("role") ?? "");
   const [hookContext, setHookContext] = useState("");
-  const [applicationId] = useState(sp.get("applicationId") ?? "");
+  const [applicationId, setApplicationId] = useState(sp.get("applicationId") ?? "");
 
   const [subject, setSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
   const [rationale, setRationale] = useState("");
+  const [emailId, setEmailId] = useState<string | null>(null);
   const [attachResume, setAttachResume] = useState(true);
   const [attachCoverLetter, setAttachCoverLetter] = useState(false);
   const [hasGenericResume, setHasGenericResume] = useState<boolean | null>(null);
@@ -35,6 +36,31 @@ function ColdEmailInner() {
       .catch(() => setHasGenericResume(false));
   }, []);
 
+  // Reopen a previously saved draft (linked from the application page).
+  const emailIdParam = sp.get("emailId");
+  useEffect(() => {
+    if (!emailIdParam) return;
+    fetch(`/api/cold-email/${emailIdParam}`)
+      .then((r) => r.json())
+      .then((d) => {
+        const e = d?.email;
+        if (!e) return;
+        setEmailId(e.id);
+        if (e.recipientCompany) setCompany(e.recipientCompany);
+        if (e.toName) setRecipientName(e.toName);
+        if (e.recipientTitle) setRecipientTitle(e.recipientTitle);
+        if (e.toAddress) setRecipientEmail(e.toAddress);
+        if (e.roleTarget) setRole(e.roleTarget);
+        if (e.hookContext) setHookContext(e.hookContext);
+        if (e.applicationId) setApplicationId(e.applicationId);
+        setSubject(e.subject ?? "");
+        setEmailBody(e.body ?? "");
+        setRationale(e.rationale ?? "");
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailIdParam]);
+
   async function generate() {
     setBusy("draft");
     setErr(null);
@@ -47,9 +73,11 @@ function ColdEmailInner() {
           company,
           recipientName,
           recipientTitle,
+          recipientEmail,
           role,
           hookContext,
           applicationId: applicationId || undefined,
+          emailId: emailId || undefined,
         }),
       });
       const data = await res.json();
@@ -57,6 +85,8 @@ function ColdEmailInner() {
       setSubject(data.subject);
       setEmailBody(data.body);
       setRationale(data.rationale);
+      setEmailId(data.emailId ?? null);
+      setOk("Draft saved — it will be kept even if you don't send it.");
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -85,6 +115,7 @@ function ColdEmailInner() {
           roleTarget: role,
           hookContext,
           rationale,
+          emailId: emailId || undefined,
         }),
       });
       const data = await res.json();

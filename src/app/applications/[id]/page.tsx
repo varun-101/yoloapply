@@ -14,7 +14,11 @@ export const dynamic = "force-dynamic";
 export default async function AppDetail({ params }: { params: { id: string } }) {
   const app = await prisma.application.findUnique({
     where: { id: params.id },
-    include: { events: { orderBy: { createdAt: "desc" }, take: 20 }, emails: true, contacts: true },
+    include: {
+      events: { orderBy: { createdAt: "desc" }, take: 20 },
+      emails: { orderBy: { createdAt: "desc" } },
+      contacts: true,
+    },
   });
   if (!app) notFound();
 
@@ -77,9 +81,11 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
                   href={app.jdUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-sm text-indigo-600 dark:text-indigo-400 hover:underline mb-2"
+                  title={app.jdUrl}
+                  className="flex max-w-full items-center gap-1 text-sm text-indigo-600 dark:text-indigo-400 hover:underline mb-2"
                 >
-                  {app.jdUrl} <ExternalLink className="h-3 w-3" />
+                  <span className="min-w-0 truncate">{app.jdUrl}</span>
+                  <ExternalLink className="h-3 w-3 shrink-0" />
                 </a>
               )}
               <div className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-300 max-h-96 overflow-auto rounded border border-slate-100 dark:border-slate-800 p-3 bg-slate-50 dark:bg-slate-950">
@@ -156,9 +162,46 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
               >
                 <Mail className="h-4 w-4" /> Draft cold email to a leader at {app.company}
               </Link>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                {app.emails.length} email{app.emails.length === 1 ? "" : "s"} drafted for this application.
-              </div>
+              {app.emails.length === 0 ? (
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  No emails drafted for this application yet.
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {app.emails.map((e) => (
+                    <li key={e.id} className="border-t border-slate-100 dark:border-slate-800 pt-2 min-w-0">
+                      {e.status === "draft" ? (
+                        <Link
+                          href={`/cold-email?emailId=${e.id}`}
+                          className="block truncate font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+                          title={e.subject}
+                        >
+                          {e.subject}
+                        </Link>
+                      ) : (
+                        <div className="truncate font-medium" title={e.subject}>
+                          {e.subject}
+                        </div>
+                      )}
+                      <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                        <Badge
+                          className={
+                            e.status === "sent"
+                              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                              : e.status === "failed"
+                              ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
+                              : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                          }
+                        >
+                          {e.status}
+                        </Badge>
+                        <span>{formatDate(e.sentAt ?? e.createdAt)}</span>
+                        {e.toAddress && <span className="truncate">→ {e.toAddress}</span>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardContent>
           </Card>
 

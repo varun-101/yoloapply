@@ -25,7 +25,7 @@ export default async function ContactsPage() {
             </div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
+              <thead className="text-left font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
                 <tr>
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Title</th>
@@ -46,7 +46,7 @@ export default async function ContactsPage() {
                     </td>
                     <td className="px-4 py-3">{c.title ?? "—"}</td>
                     <td className="px-4 py-3">{c.company}</td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
+                    <td className="px-4 py-3 font-mono text-xs text-slate-600 dark:text-slate-300">
                       {c.email ? <a className="hover:underline" href={`mailto:${c.email}`}>{c.email}</a> : "—"}
                     </td>
                     <td className="px-4 py-3">

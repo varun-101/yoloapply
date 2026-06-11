@@ -61,21 +61,69 @@ export interface DiscoveryRunResult {
   scoreError?: string;
 }
 
+export interface DiscoveryProgress {
+  scanRunId: string | null;
+  startedAt: string;
+  trigger: string;
+  phase: string;
+  sourcesDone: number;
+  sourcesTotal: number;
+  created: number;
+}
+
 // A scan takes minutes — if one is already running (double-click, button hit
 // while the scheduled script runs), join it instead of racing it on inserts.
-let activeRun: Promise<DiscoveryRunResult> | null = null;
+// Lock and progress live on globalThis so they survive dev HMR (same trick as
+// the PrismaClient cache in db.ts) and are visible to the status GET handler.
+type DiscoveryGlobal = {
+  __discoveryRun?: Promise<DiscoveryRunResult> | null;
+  __discoveryProgress?: DiscoveryProgress | null;
+};
+const g = globalThis as unknown as DiscoveryGlobal;
+
+export function getDiscoveryProgress(): DiscoveryProgress | null {
+  return g.__discoveryProgress ?? null;
+}
+
+function prog(patch: Partial<DiscoveryProgress>) {
+  if (g.__discoveryProgress) Object.assign(g.__discoveryProgress, patch);
+}
 
 export function runDiscovery(trigger: "dashboard" | "script" = "dashboard"): Promise<DiscoveryRunResult> {
-  if (!activeRun) {
-    activeRun = doRunDiscovery(trigger).finally(() => {
-      activeRun = null;
+  if (!g.__discoveryRun) {
+    g.__discoveryProgress = {
+      scanRunId: null,
+      startedAt: new Date().toISOString(),
+      trigger,
+      phase: "starting",
+      sourcesDone: 0,
+      sourcesTotal: 4,
+      created: 0,
+    };
+    g.__discoveryRun = doRunDiscovery(trigger).finally(() => {
+      g.__discoveryRun = null;
+      g.__discoveryProgress = null;
     });
   }
-  return activeRun;
+  return g.__discoveryRun;
+}
+
+// Fire-and-forget kick-off for the API route: the response must not be tied to
+// the run — outcome is persisted on the ScanRun row and the frontend polls.
+export function startDiscovery(trigger: "dashboard" | "script" = "dashboard"): {
+  alreadyRunning: boolean;
+  progress: DiscoveryProgress;
+} {
+  const alreadyRunning = !!g.__discoveryRun;
+  if (!alreadyRunning) {
+    runDiscovery(trigger).catch(() => {});
+  }
+  return { alreadyRunning, progress: getDiscoveryProgress()! };
 }
 
 async function doRunDiscovery(trigger: string): Promise<DiscoveryRunResult> {
   const scanRun = await prisma.scanRun.create({ data: { trigger } });
+  prog({ scanRunId: scanRun.id, startedAt: scanRun.startedAt.toISOString() });
   try {
     const result = await ingestAndScore(scanRun.id);
     await prisma.scanRun.update({
@@ -110,12 +158,19 @@ async function ingestAndScore(scanRunId: string): Promise<DiscoveryRunResult> {
 
   // The ATS fetcher takes the seen ids so it can skip per-job JD requests for
   // postings that would be deduped below anyway.
+  prog({ phase: "fetching sources" });
+  const tick = <T,>(p: Promise<T>): Promise<T> =>
+    p.then((r) => {
+      if (g.__discoveryProgress) g.__discoveryProgress.sourcesDone++;
+      return r;
+    });
   const [sheet, jobfound, ats, hn] = await Promise.all([
-    fetchSheetLeads(),
-    fetchJobfoundLeads(),
-    fetchAtsLeads(seenSourceIds),
-    fetchHnLeads(),
+    tick(fetchSheetLeads()),
+    tick(fetchJobfoundLeads()),
+    tick(fetchAtsLeads(seenSourceIds)),
+    tick(fetchHnLeads()),
   ]);
+  prog({ phase: "processing leads" });
   const results = [sheet, jobfound, ...ats, hn];
   const byCanonical = new Map<string, { id: string; sources: string | null; source: string }>();
   for (const l of existingLeads) {
@@ -207,11 +262,13 @@ async function ingestAndScore(scanRunId: string): Promise<DiscoveryRunResult> {
       }
       s.created++;
       createdTotal++;
+      prog({ created: createdTotal });
     }
 
     stats.push(s);
   }
 
+  prog({ phase: "scoring new leads" });
   const scoring = await scoreNewLeads();
 
   return {

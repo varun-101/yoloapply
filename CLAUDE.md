@@ -30,6 +30,35 @@ npx tsx scripts/probe-ats-companies.ts  # re-probe all ~10k boards in the datase
 - **Outbound email** sends via Gmail SMTP from `varunchandwani101@gmail.com` (nodemailer, `src/lib/mailer.ts`) — not the Outlook address printed on the resume.
 - **Never auto-submit applications or mass-email.** Playwright prefills and stops for human review; cold emails are drafted one at a time.
 
+## Programming style — robust long-running operations
+
+Every feature that triggers a non-trivial background task (discovery scans, resume generation, LLM scoring batches, email sends, etc.) **must** be implemented with the following guarantees from day one. Do not ship the happy path first and bolt these on later.
+
+### 1. Backend owns the lifecycle — survive frontend disconnects
+
+The backend must drive the task to completion regardless of what happens on the client side. If the browser tab is closed, the network drops, or the user navigates away, the task **must keep running** and its result must be retrievable later.
+
+- Kick off work from the API route handler, but do not tie progress to the response stream being open.
+- Persist task state (status, progress, result, error) in the database or an in-memory store keyed by a stable identifier so the frontend can poll or reconnect.
+
+### 2. Idempotent retries — reject duplicate kicks, notify the caller
+
+If the frontend (or scheduled task, or extension) calls the same long-running endpoint while a previous invocation is still in flight:
+
+- **Do not start a second run.** Detect the in-flight task (via a module-level lock, DB status flag, or concurrency guard).
+- **Return an informative response** (e.g., `{ status: "already_running", startedAt, progress }`) so the client can show appropriate UI ("Scan already in progress…") instead of silently queuing or erroring.
+- The existing discovery pipeline's join-the-in-flight-run pattern (`runDiscovery` lock) is the reference implementation — replicate this approach for every new long-running feature.
+
+### 3. Status & progress tracking
+
+- Expose a lightweight status endpoint (or reuse the kick-off endpoint with GET) so the frontend can poll: `idle | running | completed | failed`, plus optional progress percentage and partial results.
+- On completion or failure, persist the outcome so it is visible even if no client was listening at the time.
+
+### 4. Frontend resilience
+
+- The UI must handle the `already_running` response gracefully — show a banner/toast, disable the trigger button, and begin polling for progress.
+- On page load or reconnect, check whether a task is in flight and restore the progress UI automatically rather than showing a stale "idle" state.
+
 ## Architecture
 
 Next.js 14 App Router. Pages under `src/app/**` are client components fetching `src/app/api/**` route handlers; all business logic lives in `src/lib/**`. Prisma + SQLite at `prisma/dev.db`.
@@ -63,6 +92,13 @@ Standalone vanilla-JS extension; nothing is bundled into or imported from the Ne
 
 - Tailwind with `darkMode: "class"`. Every hardcoded color utility must carry a `dark:` twin (convention: `bg-white`→`dark:bg-slate-900`, `bg-slate-50`→`dark:bg-slate-950`, `text-slate-500`→`dark:text-slate-400`, badge tints `*-100/*-800`→`dark:*-950/dark:*-300`). Theme is applied pre-paint by an inline script in `layout.tsx`; the toggle is `src/components/theme-toggle.tsx`.
 - shadcn-style primitives in `src/components/ui/` (button/card/badge/input) with `cn()` from `src/lib/utils.ts`.
+- **"Night Shift" design language** (don't dilute it):
+  - `slate-*` is re-tinted to a deep indigo-ink scale in `tailwind.config.ts` — never reference raw grays; keep using `slate-*` utilities.
+  - `signal` (#FFB224 amber) is reserved for the agent: primary buttons, live scan activity, the on-watch pulse, active nav. Don't use amber tints for neutral chips/badges — statuses keep their own hues (`statusColor`/`statusBarColor` in `utils.ts`).
+  - Three faces via `next/font` variables: `font-display` (Bricolage Grotesque — headings get it automatically from `globals.css`, also big stat numerals), `font-sans` (Instrument Sans, body), `font-mono` (JetBrains Mono). Rule: **machine-produced data is mono** — timestamps, counts, fit scores, sources, emails, table headers, eyebrow labels; human content is sans.
+  - The sidebar rail (`layout.tsx` + `src/components/nav.tsx`) stays `bg-slate-950` in *both* themes by design — its `white/…` overlay colors intentionally have no `dark:` twins. On small screens it folds into a top strip (`MobileNav`).
+  - Page header pattern: mono uppercase eyebrow → `text-3xl font-semibold` h1 → one-line muted subtitle.
+  - The Chrome extension mirrors the theme with plain CSS variables (no Tailwind) in `extension/popup/popup.css`, `extension/options/options.css`, and `extension/content/content.css` — same ink hexes, `--signal` amber, mono-for-data rule. Keep them in sync if the palette changes.
 
 ## Environment (`.env`)
 

@@ -1,8 +1,13 @@
 import "./globals.css";
 import Link from "next/link";
-import { Briefcase, FileText, Mail, LayoutDashboard, PlusCircle, Radar, Users } from "lucide-react";
 import type { Metadata } from "next";
+import { Bricolage_Grotesque, Instrument_Sans, JetBrains_Mono } from "next/font/google";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { RailNav, MobileNav } from "@/components/nav";
+
+const display = Bricolage_Grotesque({ subsets: ["latin"], variable: "--font-display" });
+const sans = Instrument_Sans({ subsets: ["latin"], variable: "--font-sans" });
+const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
 // Applies the saved (or system) theme before first paint to avoid a light
 // flash. Must be inline in <head> — anything bundle-loaded runs too late.
@@ -14,55 +19,75 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Outbound mail goes through Gmail SMTP (mailer.ts), so show that account —
+  // OWNER_EMAIL is the resume's Outlook address, not the sender.
+  const ownerEmail = process.env.SMTP_USER ?? "varunchandwani101@gmail.com";
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={`${display.variable} ${sans.variable} ${mono.variable}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
       </head>
       <body className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
-        <div className="flex min-h-screen">
-          <aside className="w-60 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800">
-              <Link href="/" className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-md bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 grid place-items-center text-sm font-bold">Y</div>
+        <div className="flex min-h-screen flex-col md:flex-row">
+          {/* The rail stays night-dark in both themes — the agent works the
+              night shift even when the workspace is in daylight. */}
+          <aside className="hidden md:flex w-60 shrink-0 flex-col sticky top-0 h-screen bg-slate-950 border-r border-slate-800 dark:border-slate-900">
+            <div className="px-5 pt-5 pb-4 border-b border-white/10">
+              <Link
+                href="/"
+                className="group flex items-center gap-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70 rounded-md"
+              >
+                <div className="grid h-8 w-8 place-items-center rounded-lg bg-signal font-display text-sm font-bold text-slate-950">
+                  Y
+                </div>
                 <div>
-                  <div className="text-sm font-semibold">YOLOapply</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">auto-apply agent</div>
+                  <div className="font-display text-[15px] font-semibold tracking-tight text-white">
+                    YOLOapply
+                  </div>
+                  <div className="font-mono text-[10px] text-slate-500">night-shift job agent</div>
                 </div>
               </Link>
             </div>
-            <nav className="p-2 text-sm">
-              <NavItem href="/" icon={<LayoutDashboard className="h-4 w-4" />} label="Dashboard" />
-              <NavItem href="/discover" icon={<Radar className="h-4 w-4" />} label="Discover" />
-              <NavItem href="/applications/new" icon={<PlusCircle className="h-4 w-4" />} label="New Application" />
-              <NavItem href="/applications" icon={<Briefcase className="h-4 w-4" />} label="Applications" />
-              <NavItem href="/cold-email" icon={<Mail className="h-4 w-4" />} label="Cold Outreach" />
-              <NavItem href="/contacts" icon={<Users className="h-4 w-4" />} label="Contacts" />
-              <NavItem href="/resume" icon={<FileText className="h-4 w-4" />} label="Generic Resume" />
-              <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <ThemeToggle />
+
+            <RailNav />
+
+            <div className="border-t border-white/10 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-signal" />
+                </span>
+                <span className="text-xs font-medium text-slate-200">Agent on watch</span>
               </div>
-            </nav>
-            <div className="p-3 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 absolute bottom-0 w-60">
-              Sending from{" "}
-              <span className="font-medium text-slate-700 dark:text-slate-300">{process.env.OWNER_EMAIL ?? "varunchandwani101@gmail.com"}</span>
+              <p className="font-mono text-[10px] leading-relaxed text-slate-500">
+                sweeps the boards every 3h
+                <br />
+                nothing sends without your review
+              </p>
+              <p className="font-mono text-[10px] text-slate-500 truncate" title={ownerEmail}>
+                from <span className="text-slate-300">{ownerEmail}</span>
+              </p>
+              <ThemeToggle />
             </div>
           </aside>
+
+          {/* Small screens: the rail folds into a top strip. */}
+          <header className="md:hidden sticky top-0 z-40 bg-slate-950 border-b border-slate-800">
+            <div className="flex items-center justify-between px-4 pt-3 pb-1">
+              <Link href="/" className="flex items-center gap-2">
+                <div className="grid h-6 w-6 place-items-center rounded-md bg-signal font-display text-xs font-bold text-slate-950">
+                  Y
+                </div>
+                <span className="font-display text-sm font-semibold text-white">YOLOapply</span>
+              </Link>
+              <ThemeToggle compact />
+            </div>
+            <MobileNav />
+          </header>
+
           <main className="flex-1 min-w-0">{children}</main>
         </div>
       </body>
     </html>
-  );
-}
-
-function NavItem({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) {
-  return (
-    <Link
-      href={href}
-      className="flex items-center gap-2 rounded-md px-3 py-2 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-    >
-      {icon}
-      <span>{label}</span>
-    </Link>
   );
 }

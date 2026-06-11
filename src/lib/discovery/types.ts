@@ -44,3 +44,8 @@ export const SOURCE_LABEL: Record<string, string> = {
 export function sourceTier(source: string): number {
   return SOURCE_TIER[source] ?? 9;
 }
+
+// A ScanRun with finishedAt = null is "running" only this long after it
+// started; older open rows belong to a process that died mid-run. Scans take
+// a few minutes — 30 min leaves generous headroom.
+export const SCAN_STALE_MS = 30 * 60_000;

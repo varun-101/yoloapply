@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
     roleTarget,
     hookContext,
     rationale,
+    emailId,
   } = body ?? {};
   if (!to || !subject || !emailBody) {
     return NextResponse.json({ error: "to, subject, emailBody required" }, { status: 400 });
@@ -80,24 +81,31 @@ export async function POST(req: NextRequest) {
   }
 
   // Persist as draft first so we have a record even if SMTP fails.
-  const draft = await prisma.email.create({
-    data: {
-      toAddress: to,
-      toName: toName ?? null,
-      fromAddress: process.env.SMTP_USER ?? owner.email,
-      subject,
-      body: emailBody,
-      status: "draft",
-      applicationId: applicationId ?? null,
-      contactId: resolvedContactId,
-      recipientTitle: recipientTitle ?? null,
-      recipientCompany: recipientCompany ?? null,
-      roleTarget: roleTarget ?? null,
-      hookContext: hookContext ?? null,
-      rationale: rationale ?? null,
-      attachSource,
-    },
-  });
+  // The draft endpoint already saved a row; reuse it (with any edits the
+  // user made before sending) instead of creating a duplicate.
+  const draftData = {
+    toAddress: to,
+    toName: toName ?? null,
+    fromAddress: process.env.SMTP_USER ?? owner.email,
+    subject,
+    body: emailBody,
+    status: "draft",
+    applicationId: applicationId ?? null,
+    contactId: resolvedContactId,
+    recipientTitle: recipientTitle ?? null,
+    recipientCompany: recipientCompany ?? null,
+    roleTarget: roleTarget ?? null,
+    hookContext: hookContext ?? null,
+    rationale: rationale ?? null,
+    attachSource,
+  };
+  const existingDraft = emailId
+    ? await prisma.email.findUnique({ where: { id: emailId } })
+    : null;
+  const draft =
+    existingDraft && existingDraft.status === "draft"
+      ? await prisma.email.update({ where: { id: emailId }, data: draftData })
+      : await prisma.email.create({ data: draftData });
 
   try {
     const info = await sendEmail({
