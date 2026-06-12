@@ -2,8 +2,12 @@ import "./globals.css";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, Instrument_Sans, JetBrains_Mono } from "next/font/google";
+import { ClerkProvider, SignedIn, SignOutButton, UserButton } from "@clerk/nextjs";
+import { LogOut } from "lucide-react";
+import { currentUser } from "@clerk/nextjs/server";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { RailNav, MobileNav } from "@/components/nav";
+import { clerkAppearance } from "@/lib/clerkAppearance";
 
 const display = Bricolage_Grotesque({ subsets: ["latin"], variable: "--font-display" });
 const sans = Instrument_Sans({ subsets: ["latin"], variable: "--font-sans" });
@@ -18,11 +22,11 @@ export const metadata: Metadata = {
   description: "Auto-apply to jobs with AI-tailored LaTeX resumes and cold email outreach.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // Outbound mail goes through Gmail SMTP (mailer.ts), so show that account —
-  // OWNER_EMAIL is the resume's Outlook address, not the sender.
-  const ownerEmail = process.env.SMTP_USER ?? "varunchandwani101@gmail.com";
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const user = await currentUser();
+  const email = user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses[0]?.emailAddress;
   return (
+    <ClerkProvider appearance={clerkAppearance}>
     <html lang="en" suppressHydrationWarning className={`${display.variable} ${sans.variable} ${mono.variable}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
@@ -64,9 +68,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <br />
                 nothing sends without your review
               </p>
-              <p className="font-mono text-[10px] text-slate-500 truncate" title={ownerEmail}>
-                from <span className="text-slate-300">{ownerEmail}</span>
-              </p>
+              <SignedIn>
+                <div className="flex items-center gap-2 min-w-0">
+                  <UserButton afterSignOutUrl="/sign-in" />
+                  {email && (
+                    <span className="truncate font-mono text-[10px] text-slate-500" title={email}>
+                      {email}
+                    </span>
+                  )}
+                </div>
+                <SignOutButton redirectUrl="/sign-in">
+                  <button className="flex items-center gap-2 rounded-md px-1 py-1 text-xs text-slate-400 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70">
+                    <LogOut className="h-3.5 w-3.5" />
+                    Sign out
+                  </button>
+                </SignOutButton>
+              </SignedIn>
               <ThemeToggle />
             </div>
           </aside>
@@ -80,7 +97,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </div>
                 <span className="font-display text-sm font-semibold text-white">YOLOapply</span>
               </Link>
-              <ThemeToggle compact />
+              <div className="flex items-center gap-3">
+                <SignedIn>
+                  <UserButton afterSignOutUrl="/sign-in" />
+                </SignedIn>
+                <ThemeToggle compact />
+              </div>
             </div>
             <MobileNav />
           </header>
@@ -89,5 +111,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </div>
       </body>
     </html>
+    </ClerkProvider>
   );
 }

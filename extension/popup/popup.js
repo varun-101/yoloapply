@@ -86,7 +86,7 @@ async function triggerContentButton(act) {
 async function paintConnection() {
   const settings = await getSettings();
   if (!settings.apiKey) {
-    conn.textContent = "API key missing — open Options";
+    conn.textContent = "API token missing — open Options";
     return;
   }
   const r = await bg({ type: "ping" });

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
+import { requirePageUser } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
@@ -33,8 +34,9 @@ function attachLabel(src: string | null) {
 }
 
 export default async function ContactDetail({ params }: { params: { id: string } }) {
-  const c = await prisma.contact.findUnique({
-    where: { id: params.id },
+  const user = await requirePageUser();
+  const c = await prisma.contact.findFirst({
+    where: { id: params.id, userId: user.id },
     include: {
       emails: { orderBy: { createdAt: "desc" } },
       application: true,

@@ -1,17 +1,9 @@
 import { spawn } from "child_process";
 import { mkdir, writeFile, readFile, rm } from "fs/promises";
-import { existsSync } from "fs";
 import path from "path";
 import os from "os";
 import { PDFDocument } from "pdf-lib";
-
-const STORAGE_DIR = process.env.STORAGE_DIR ?? "./storage";
-
-export async function ensureStorage(): Promise<string> {
-  const abs = path.resolve(STORAGE_DIR);
-  await mkdir(abs, { recursive: true });
-  return abs;
-}
+import { saveFile } from "./files";
 
 function which(bin: string): Promise<string | null> {
   return new Promise((resolve) => {
@@ -131,35 +123,25 @@ export async function compileLatex(tex: string): Promise<Buffer> {
   return runRemote(tex);
 }
 
+// Persist compiled artifacts to the storage bucket + StoredFile metadata.
 export async function saveResumeArtifacts(
+  userId: string,
   applicationId: string,
   tex: string,
-  pdf: Buffer
-): Promise<{ texPath: string; pdfPath: string }> {
-  const base = await ensureStorage();
-  const dir = path.join(base, "applications", applicationId);
-  await mkdir(dir, { recursive: true });
-  const texPath = path.join(dir, "resume.tex");
-  const pdfPath = path.join(dir, "resume.pdf");
-  await writeFile(texPath, tex, "utf8");
-  await writeFile(pdfPath, pdf);
-  return { texPath, pdfPath };
-}
-
-export function pdfExists(p: string | null | undefined): boolean {
-  return !!p && existsSync(p);
+  pdf: Buffer,
+  pdfFilename: string
+): Promise<void> {
+  await saveFile(userId, applicationId, "resume_tex", pdfFilename.replace(/\.pdf$/i, ".tex"), Buffer.from(tex, "utf8"));
+  await saveFile(userId, applicationId, "resume_pdf", pdfFilename, pdf);
 }
 
 export async function saveCoverLetterPdf(
+  userId: string,
   applicationId: string,
-  pdf: Buffer
-): Promise<{ pdfPath: string }> {
-  const base = await ensureStorage();
-  const dir = path.join(base, "applications", applicationId);
-  await mkdir(dir, { recursive: true });
-  const pdfPath = path.join(dir, "cover-letter.pdf");
-  await writeFile(pdfPath, pdf);
-  return { pdfPath };
+  pdf: Buffer,
+  pdfFilename: string
+): Promise<void> {
+  await saveFile(userId, applicationId, "cover_letter_pdf", pdfFilename, pdf);
 }
 
 export async function countPdfPages(pdf: Buffer): Promise<number> {

@@ -1,20 +1,28 @@
 import OpenAI from "openai";
 
-let _client: OpenAI | null = null;
+// Per-user DeepSeek keys: clients are cached per key (on globalThis so the
+// cache survives HMR, same pattern as db.ts).
+const globalForLlm = globalThis as unknown as { __llmClients?: Map<string, OpenAI> };
+const clients = (globalForLlm.__llmClients ??= new Map<string, OpenAI>());
 
-export function llm(): OpenAI {
-  if (_client) return _client;
-  const key = process.env.DEEPSEEK_API_KEY;
-  if (!key) {
-    throw new Error(
-      "DEEPSEEK_API_KEY is not set. Copy .env.example to .env and add your DeepSeek key."
-    );
-  }
-  _client = new OpenAI({
-    apiKey: key,
+export function llm(apiKey: string): OpenAI {
+  const cached = clients.get(apiKey);
+  if (cached) return cached;
+  const client = new OpenAI({
+    apiKey,
     baseURL: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
   });
-  return _client;
+  clients.set(apiKey, client);
+  return client;
+}
+
+// Server-level key — used ONLY for global discovery work (HN extraction)
+// that runs outside any user context. Everything user-facing passes the
+// user's own key from src/lib/credentials.ts.
+export function serverApiKey(): string {
+  const key = process.env.DEEPSEEK_API_KEY;
+  if (!key) throw new Error("DEEPSEEK_API_KEY (server-level) is not set.");
+  return key;
 }
 
 export const LLM_MODEL = process.env.DEEPSEEK_MODEL ?? "deepseek-chat";
@@ -50,6 +58,7 @@ export function parseJsonFromText<T = unknown>(text: string): T {
 }
 
 export interface ChatJsonOptions {
+  apiKey: string;
   system: string;
   user: string;
   maxTokens?: number;
@@ -71,7 +80,7 @@ export async function chatJson<T = unknown>(opts: ChatJsonOptions): Promise<T> {
   let lastInfo = "";
 
   for (let i = 0; i < attempts; i++) {
-    const resp = await llm().chat.completions.create({
+    const resp = await llm(opts.apiKey).chat.completions.create({
       model: LLM_MODEL,
       max_tokens: maxTokens,
       temperature: opts.temperature ?? 0.4,

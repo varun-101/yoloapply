@@ -24,6 +24,7 @@ function ColdEmailInner() {
   const [attachResume, setAttachResume] = useState(true);
   const [attachCoverLetter, setAttachCoverLetter] = useState(false);
   const [hasGenericResume, setHasGenericResume] = useState<boolean | null>(null);
+  const [fromAddress, setFromAddress] = useState<string | null>(null);
 
   const [busy, setBusy] = useState<"draft" | "send" | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -34,6 +35,10 @@ function ColdEmailInner() {
       .then((r) => r.json())
       .then((d) => setHasGenericResume(!!d?.exists))
       .catch(() => setHasGenericResume(false));
+    fetch("/api/settings/credentials")
+      .then((r) => r.json())
+      .then((d) => setFromAddress(d?.smtpUser ?? null))
+      .catch(() => {});
   }, []);
 
   // Reopen a previously saved draft (linked from the application page).
@@ -260,7 +265,7 @@ function ColdEmailInner() {
               className="bg-emerald-600 hover:bg-emerald-700 text-white"
             >
               {busy === "send" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Send from {process.env.NEXT_PUBLIC_OWNER_EMAIL ?? "your account"}
+              Send from {fromAddress ?? "your account"}
             </Button>
           </CardContent>
         </Card>

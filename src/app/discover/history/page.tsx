@@ -194,7 +194,7 @@ export default function ScanHistoryPage() {
                         </Badge>
                       )}
                       <Badge className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                        {run.trigger === "script" ? "scheduled" : "manual"}
+                        {run.trigger === "manual" ? "manual" : "scheduled"}
                       </Badge>
                       <span className="text-xs text-slate-500 dark:text-slate-400">
                         {duration(run)}

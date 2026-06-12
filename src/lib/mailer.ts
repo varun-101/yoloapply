@@ -1,24 +1,14 @@
 import nodemailer from "nodemailer";
-import { readFile } from "fs/promises";
-import path from "path";
-import { owner } from "./owner";
+import { getSmtpConfig } from "./credentials";
 
-export function getTransport() {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT ?? 587);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  if (!host || !user || !pass) {
-    throw new Error(
-      "SMTP not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS in .env (use an app password for Outlook/Gmail)."
-    );
-  }
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-  });
+// Outbound email sends through the USER's own SMTP account (Gmail app
+// password saved in Settings → Credentials) — cold emails must come from
+// the applicant's address, not a shared one.
+
+export interface MailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
 }
 
 export interface SendOptions {
@@ -26,39 +16,31 @@ export interface SendOptions {
   toName?: string;
   subject: string;
   body: string; // plain text
-  attachResumePdfPath?: string | null;
-  attachCoverLetterPdfPath?: string | null;
+  attachments?: MailAttachment[];
 }
 
-export async function sendEmail(opts: SendOptions): Promise<{ messageId: string }> {
-  const transport = getTransport();
-  const fromName = process.env.SMTP_FROM_NAME ?? owner.name;
-  const fromAddress = process.env.SMTP_USER ?? owner.email;
-
-  const attachments = [];
-  if (opts.attachResumePdfPath) {
-    const buf = await readFile(opts.attachResumePdfPath);
-    attachments.push({
-      filename: `Varun_Chandwani_Resume.pdf`,
-      content: buf,
-      contentType: "application/pdf",
-    });
-  }
-  if (opts.attachCoverLetterPdfPath) {
-    const buf = await readFile(opts.attachCoverLetterPdfPath);
-    attachments.push({
-      filename: `Varun_Chandwani_CoverLetter.pdf`,
-      content: buf,
-      contentType: "application/pdf",
-    });
-  }
+export async function sendEmail(
+  userId: string,
+  opts: SendOptions
+): Promise<{ messageId: string; fromAddress: string }> {
+  const smtp = await getSmtpConfig(userId);
+  const transport = nodemailer.createTransport({
+    host: smtp.host,
+    port: smtp.port,
+    secure: smtp.port === 465,
+    auth: { user: smtp.user, pass: smtp.pass },
+  });
 
   const info = await transport.sendMail({
-    from: { name: fromName, address: fromAddress },
+    from: { name: smtp.fromName, address: smtp.user },
     to: opts.toName ? { name: opts.toName, address: opts.to } : opts.to,
     subject: opts.subject,
     text: opts.body,
-    attachments,
+    attachments: (opts.attachments ?? []).map((a) => ({
+      filename: a.filename,
+      content: a.content,
+      contentType: a.contentType ?? "application/pdf",
+    })),
   });
-  return { messageId: info.messageId };
+  return { messageId: info.messageId, fromAddress: smtp.user };
 }

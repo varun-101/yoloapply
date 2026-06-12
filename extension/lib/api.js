@@ -4,7 +4,7 @@ import { getSettings } from "./storage.js";
 async function request(path, init = {}) {
   const { apiBase, apiKey } = await getSettings();
   if (!apiBase) throw new Error("Backend URL not configured. Open the extension Options.");
-  if (!apiKey) throw new Error("API key not configured. Open the extension Options.");
+  if (!apiKey) throw new Error("API token not configured. Open the extension Options.");
   const url = apiBase.replace(/\/$/, "") + path;
   const headers = new Headers(init.headers ?? {});
   headers.set("Authorization", `Bearer ${apiKey}`);

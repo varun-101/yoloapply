@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { sourceTier } from "@/lib/discovery/types";
+import { requireUser, apiError } from "@/lib/auth";
 
 export type LeadSort = "trust" | "newest" | "oldest" | "score" | "company";
 
@@ -16,6 +17,8 @@ const DB_ORDER: Record<LeadSort, Prisma.JobLeadOrderByWithRelationInput[]> = {
 };
 
 export async function GET(req: NextRequest) {
+  try {
+  const user = await requireUser(req);
   const sp = req.nextUrl.searchParams;
   const status = sp.get("status") ?? "new";
   const source = sp.get("source");
@@ -24,7 +27,7 @@ export async function GET(req: NextRequest) {
   const sortParam = sp.get("sort") ?? "trust";
   const sort: LeadSort = sortParam in DB_ORDER ? (sortParam as LeadSort) : "trust";
 
-  const where: Record<string, unknown> = {};
+  const where: Record<string, unknown> = { userId: user.id };
   if (status !== "all") where.status = status;
   const scanRunId = sp.get("scanRunId");
   if (scanRunId) where.scanRunId = scanRunId;
@@ -68,4 +71,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json(leads);
+  } catch (e) {
+    return apiError(e);
+  }
 }

@@ -11,10 +11,14 @@
 // have CAPTCHAs, custom multi-step flows, and ToS implications around full automation.
 // The agent does the boring 80% and leaves the human in the loop for the final click.
 
+try { process.loadEnvFile(".env"); } catch {}
+
 import { chromium } from "playwright";
 import { PrismaClient } from "@prisma/client";
-import { existsSync } from "fs";
-import { owner } from "../src/lib/owner";
+import { writeFile } from "fs/promises";
+import path from "path";
+import os from "os";
+import { getFile } from "../src/lib/files";
 
 const prisma = new PrismaClient();
 
@@ -38,10 +42,31 @@ async function main() {
     console.error("application has no applyUrl");
     process.exit(2);
   }
-  if (!app.resumePdfPath || !existsSync(app.resumePdfPath)) {
+
+  // Profile of the user who owns this application (replaces the old
+  // hardcoded owner module).
+  const profileRow = await prisma.userProfile.findUnique({ where: { userId: app.userId } });
+  if (!profileRow) {
+    console.error("no profile found for the application's user; set up Settings → Profile first");
+    process.exit(2);
+  }
+  const owner = {
+    name: profileRow.name,
+    email: profileRow.email,
+    phone: profileRow.phone ?? "",
+    github: profileRow.github ?? "",
+    linkedin: profileRow.linkedin ?? "",
+    portfolio: profileRow.portfolio ?? "",
+  };
+
+  // Pull the personalized PDF from storage into a temp file for the upload input.
+  const resumeFile = await getFile(app.userId, app.id, "resume_pdf");
+  if (!resumeFile) {
     console.error("no personalized PDF found; personalize first");
     process.exit(2);
   }
+  const resumePdfPath = path.join(os.tmpdir(), `yoloapply-${app.id}-resume.pdf`);
+  await writeFile(resumePdfPath, resumeFile.data);
 
   console.log("Launching browser…");
   const browser = await chromium.launch({ headless: false, slowMo: 100 });
@@ -105,7 +130,7 @@ async function main() {
       const idAttr = (await fi.getAttribute("id")) ?? "";
       const blob = (nameAttr + " " + idAttr).toLowerCase();
       if (/resume|cv|file/.test(blob) || fileInputs.length === 1) {
-        await fi.setInputFiles(app.resumePdfPath);
+        await fi.setInputFiles(resumePdfPath);
         console.log("Uploaded resume to file input:", nameAttr || idAttr || "(unnamed)");
         break;
       }
@@ -127,7 +152,7 @@ async function main() {
 
   // Wait until the browser is closed by the user.
   await new Promise<void>((resolve) => {
-    browser.on("disconnected", resolve);
+    browser.on("disconnected", () => resolve());
   });
   await prisma.$disconnect();
 }

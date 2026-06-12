@@ -8,15 +8,39 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { LOCATION_KEYWORDS, titleMatches } from "../src/lib/discovery/config";
+import {
+  DEFAULT_INCLUDE_KEYWORDS,
+  DEFAULT_EXCLUDE_KEYWORDS,
+  titleMatches,
+} from "../src/lib/searchPrefs";
 
 const DATA_DIR = join(__dirname, "..", "data", "ats-companies");
 const CONCURRENCY = 16;
 const TIMEOUT_MS = 20_000;
 
+// Probe criteria are operator-level, not per-user: the dataset was curated as
+// "boards with ≥1 India posting", so the location list stays inlined here.
+// Titles use the generic engineering defaults from searchPrefs.
+const PROBE_PREFS = {
+  includeKeywords: DEFAULT_INCLUDE_KEYWORDS,
+  excludeKeywords: DEFAULT_EXCLUDE_KEYWORDS,
+};
+
 // "remote" passes the runtime location filter, but a "Remote - US only" role is
-// useless from Mumbai — so the probe tracks India and remote separately.
-const INDIA_KEYWORDS = LOCATION_KEYWORDS.filter((k) => k !== "remote");
+// useless from India — so the probe tracks India and remote separately.
+const INDIA_KEYWORDS = [
+  "india",
+  "bengaluru",
+  "bangalore",
+  "mumbai",
+  "pune",
+  "hyderabad",
+  "chennai",
+  "gurgaon",
+  "gurugram",
+  "noida",
+  "delhi",
+];
 
 interface Company {
   ats: "greenhouse" | "lever" | "ashby";
@@ -116,7 +140,7 @@ function probeCompany(c: Company, postings: Posting[]): ProbeResult {
     if (!india && !remote) continue;
     if (india) result.indiaJobs++;
     else result.remoteJobs++;
-    if (titleMatches(p.title)) {
+    if (titleMatches(PROBE_PREFS, p.title)) {
       if (india) result.relevantIndiaJobs++;
       else result.relevantRemoteJobs++;
       if (result.sampleRoles.length < 3) result.sampleRoles.push(p.title.trim());

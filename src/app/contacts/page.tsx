@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { requirePageUser } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
@@ -7,7 +8,9 @@ import { formatDate } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export default async function ContactsPage() {
+  const user = await requirePageUser();
   const contacts = await prisma.contact.findMany({
+    where: { userId: user.id },
     orderBy: { createdAt: "desc" },
     include: { emails: { orderBy: { createdAt: "desc" }, take: 1 } },
   });

@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { requirePageUser } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDate, statusColor, statusBarColor } from "@/lib/utils";
+import { getSetupStatus } from "@/lib/setup";
+import { SetupChecklist } from "@/components/setup-checklist";
 import { ArrowRight, PlusCircle } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -12,13 +15,16 @@ export const dynamic = "force-dynamic";
 const STATUS_ORDER = ["draft", "personalized", "applied", "replied", "interview", "offer", "rejected", "closed"];
 
 export default async function Dashboard() {
-  const [apps, emails] = await Promise.all([
-    prisma.application.findMany({ orderBy: { createdAt: "desc" }, take: 8 }),
-    prisma.email.count(),
+  const user = await requirePageUser();
+  const [apps, emails, setup] = await Promise.all([
+    prisma.application.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 8 }),
+    prisma.email.count({ where: { userId: user.id } }),
+    getSetupStatus(user.id),
   ]);
 
   const byStatus = await prisma.application.groupBy({
     by: ["status"],
+    where: { userId: user.id },
     _count: { status: true },
   });
 
@@ -55,6 +61,8 @@ export default async function Dashboard() {
           </Link>
         </Button>
       </div>
+
+      <SetupChecklist status={setup} />
 
       <Card className="mb-8">
         <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-slate-100 dark:divide-slate-800 border-b border-slate-100 dark:border-slate-800">

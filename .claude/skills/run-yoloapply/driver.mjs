@@ -42,8 +42,11 @@ fs.mkdirSync(SHOTS, { recursive: true });
 
 async function serverUp() {
   try {
+    // Any HTTP response means the server is alive. Clerk's auth.protect()
+    // answers plain (non-browser) fetches of protected pages with 404, so
+    // res.ok would call a healthy server dead.
     const res = await fetch(BASE, { signal: AbortSignal.timeout(4000) });
-    return res.ok;
+    return res.status < 500;
   } catch {
     return false;
   }

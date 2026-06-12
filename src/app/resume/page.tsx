@@ -6,6 +6,7 @@ import { FileText, Loader2, Trash2, Upload, ExternalLink } from "lucide-react";
 
 interface Info {
   exists: boolean;
+  filename?: string;
   size?: number;
   uploadedAt?: string;
 }
@@ -81,7 +82,7 @@ export default function ResumePage() {
               <div className="flex items-center gap-3 min-w-0">
                 <FileText className="h-8 w-8 text-rose-600 dark:text-rose-400 shrink-0" />
                 <div className="min-w-0">
-                  <div className="font-medium truncate">Varun_Chandwani_Resume.pdf</div>
+                  <div className="font-medium truncate">{info.filename ?? "resume.pdf"}</div>
                   <div className="text-xs text-slate-500 dark:text-slate-400">
                     {bytes(info.size ?? 0)} · uploaded {info.uploadedAt ? new Date(info.uploadedAt).toLocaleString() : "—"}
                   </div>

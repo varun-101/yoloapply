@@ -8,18 +8,18 @@
 <body>
   <main>
     <h1>YOLOapply Settings</h1>
-    <p class="muted">The extension talks to your local backend. Set the URL and the shared API key.</p>
+    <p class="muted">The extension talks to your YOLOapply backend. Set the URL and your personal API token.</p>
 
     <label>
       <span>Backend URL</span>
       <input type="url" data-field="apiBase" placeholder="http://localhost:3001" />
-      <small class="muted">Your Next.js app — usually <code>http://localhost:3001</code> while developing.</small>
+      <small class="muted">Your YOLOapply app — <code>http://localhost:3001</code> while developing, or the deployed URL.</small>
     </label>
 
     <label>
-      <span>API key</span>
-      <input type="text" data-field="apiKey" placeholder="paste from .env: EXTENSION_API_KEY" />
-      <small class="muted">Set <code>EXTENSION_API_KEY</code> in <code>.env</code> and paste the same value here.</small>
+      <span>Personal API token</span>
+      <input type="text" data-field="apiKey" placeholder="yolo_…" />
+      <small class="muted">Generate it in the web app under <strong>Settings → Credentials → Chrome extension token</strong>. It's tied to your account.</small>
     </label>
 
     <label class="check">

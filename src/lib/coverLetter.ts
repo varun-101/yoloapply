@@ -1,6 +1,7 @@
 import { chatJson, deAi } from "./llm";
-import { owner } from "./owner";
-import { PROJECT_BANK } from "./projects";
+import { getProfile, CandidateProfile } from "./profile";
+import { getProjectBank } from "./projectBank";
+import { getDeepseekKey } from "./credentials";
 
 const SYSTEM = `You write tailored, sincere cover letters for a software-engineering candidate. The letter must be specific, confident, and grounded ONLY in the candidate's real experience and projects — never fabricate employers, metrics, technologies, or claims.
 
@@ -25,15 +26,20 @@ interface Input {
   jobDescription?: string;
 }
 
-export async function generateCoverLetter(input: Input): Promise<CoverLetterDraft> {
+export async function generateCoverLetter(userId: string, input: Input): Promise<CoverLetterDraft> {
+  const [profile, projectBank, apiKey] = await Promise.all([
+    getProfile(userId),
+    getProjectBank(userId),
+    getDeepseekKey(userId),
+  ]);
   const candidate = {
-    name: owner.name,
-    education: owner.education,
-    experience: owner.experience,
-    extras: owner.extras,
-    portfolio: owner.portfolio,
-    github: owner.github,
-    topProjects: PROJECT_BANK.filter((p) => p.featured).map((p) => ({
+    name: profile.name,
+    education: profile.education,
+    experience: profile.experience,
+    extras: profile.extras,
+    portfolio: profile.portfolio,
+    github: profile.github,
+    topProjects: projectBank.filter((p) => p.featured).map((p) => ({
       title: p.title,
       oneLiner: p.oneLiner,
       problem: p.problem,
@@ -41,7 +47,7 @@ export async function generateCoverLetter(input: Input): Promise<CoverLetterDraf
       outcome: p.outcome,
       tech: p.techStack,
     })),
-    otherProjects: PROJECT_BANK.filter((p) => !p.featured).map((p) => ({
+    otherProjects: projectBank.filter((p) => !p.featured).map((p) => ({
       title: p.title,
       oneLiner: p.oneLiner,
       tech: p.techStack,
@@ -60,6 +66,7 @@ ${input.jobDescription ? `Job description:\n"""\n${input.jobDescription.slice(0,
 Write the cover letter per the schema. Pick the proof points that best match THIS job. Salutation should address the company by name where natural (e.g. "Dear ${input.company} Hiring Team,"). Stay truthful to the candidate's data.`;
 
   const draft = await chatJson<CoverLetterDraft>({
+    apiKey,
     system: SYSTEM,
     user: userPrompt,
     maxTokens: 6144,
@@ -74,8 +81,9 @@ Write the cover letter per the schema. Pick the proof points that best match THI
 
 
 // Render the structured draft to a plain-text cover letter (for copy/paste + email).
-export function coverLetterToText(draft: CoverLetterDraft): string {
-  const header = `${owner.name}\n${owner.email} | ${owner.phone}\n${owner.portfolio}`;
+export function coverLetterToText(profile: CandidateProfile, draft: CoverLetterDraft): string {
+  const contactLine = [profile.email, profile.phone].filter(Boolean).join(" | ");
+  const header = [profile.name, contactLine, profile.portfolio].filter(Boolean).join("\n");
   return [
     header,
     "",
@@ -84,6 +92,6 @@ export function coverLetterToText(draft: CoverLetterDraft): string {
     draft.paragraphs.join("\n\n"),
     "",
     draft.closing,
-    owner.name,
+    profile.name,
   ].join("\n");
 }

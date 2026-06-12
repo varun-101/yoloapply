@@ -1,5 +1,4 @@
-import { owner } from "./owner";
-import { ProjectBankItem } from "./projects";
+import { CandidateProfile } from "./profile";
 
 // LaTeX escape: escape characters that have special meaning in LaTeX.
 export function escTex(s: string): string {
@@ -33,14 +32,19 @@ export interface ResumeDraft {
     repoUrl: string;
     liveUrl?: string;
   }[];
-  experienceBullets: string[]; // tailored bullets for the Loan for India internship
+  // Tailored bullets per experience entry; index points into profile.experience.
+  experienceBullets: { index: number; bullets: string[] }[];
   // optionally swap target role line:
   targetRole?: string;
 }
 
 export type Tightness = 0 | 1 | 2;
 
-export function buildLatexResume(draft: ResumeDraft, tightness: Tightness = 0): string {
+export function buildLatexResume(
+  profile: CandidateProfile,
+  draft: ResumeDraft,
+  tightness: Tightness = 0
+): string {
   const e = (s: string) => escTex(s);
 
   const skillsBlock = draft.skillsOrdered
@@ -64,9 +68,55 @@ ${bullets}
     })
     .join("\n\n");
 
-  const experienceBullets = draft.experienceBullets
-    .map((b) => `    \\item ${e(b)}`)
+  // One \resumeSubheading per experience entry, with the AI-tailored bullets
+  // (falling back to the profile's own bullets if the draft skipped an entry).
+  const experienceBlock = profile.experience
+    .map((entry, i) => {
+      const tailored = draft.experienceBullets.find((b) => b.index === i)?.bullets;
+      const bullets = (tailored?.length ? tailored : entry.bullets)
+        .map((b) => `    \\item ${e(b)}`)
+        .join("\n");
+      const loc = entry.location ?? [profile.city, profile.country].filter(Boolean).join(", ");
+      return `\\resumeSubheading
+  {${e(entry.title)}}{${e(entry.period)}}
+  {${e(entry.company)}}{${e(loc)}}
+  \\resumeItemListStart
+${bullets}
+  \\resumeItemListEnd`;
+    })
     .join("\n");
+
+  // Header links — only the ones the profile actually has.
+  const headerLinks = [
+    profile.phone ? e(profile.phone) : null,
+    `\\href{mailto:${profile.email}}{\\underline{${e(profile.email)}}}`,
+    profile.github ? `\\href{${profile.github}}{\\underline{GitHub}}` : null,
+    profile.linkedin ? `\\href{${profile.linkedin}}{\\underline{LinkedIn}}` : null,
+    profile.portfolio ? `\\href{${profile.portfolio}}{\\underline{Portfolio}}` : null,
+  ]
+    .filter(Boolean)
+    .join(" $|$\n  ");
+
+  const experienceSection = profile.experience.length
+    ? `% ----------EXPERIENCE----------
+\\section{Experience}
+\\resumeSubHeadingListStart
+${experienceBlock}
+\\resumeSubHeadingListEnd
+`
+    : "";
+
+  const edu = profile.education;
+  const educationSection = edu
+    ? `% ----------EDUCATION----------
+\\section{Education}
+\\resumeSubHeadingListStart
+\\resumeSubheading
+  {${e(edu.school)}}{${edu.grad ? `Expected ${e(edu.grad)}` : ""}}
+  {${e(edu.degree)}${edu.cgpa ? ` (CGPA ${e(edu.cgpa)})` : ""}}{}
+\\resumeSubHeadingListEnd
+`
+    : "";
 
   // Font size + vertical spacing tightens as we ratchet up to enforce a 1-page limit.
   const docFontSize = tightness >= 2 ? "10pt" : "11pt";
@@ -149,11 +199,8 @@ ${bullets}
 
 % ----------HEADER----------
 \begin{center}
-  \textbf{\Huge \scshape ${e(owner.name)}} \\ \vspace{1pt}
-  \small ${e(owner.phone)} $|$ \href{mailto:${owner.email}}{\underline{${e(owner.email)}}} $|$
-  \href{${owner.github}}{\underline{GitHub}} $|$
-  \href{${owner.linkedin}}{\underline{LinkedIn}} $|$
-  \href{${owner.portfolio}}{\underline{Portfolio}}
+  \textbf{\Huge \scshape ${e(profile.name)}} \\ \vspace{1pt}
+  \small ${headerLinks}
 \end{center}
 
 % ----------SUMMARY----------
@@ -165,31 +212,14 @@ ${bullets}
 ${skillsBlock}
 }}\end{itemize}\vspace{-10pt}
 
-% ----------EXPERIENCE----------
-\section{Experience}
-\resumeSubHeadingListStart
-\resumeSubheading
-  {Backend Software Engineer Intern}{June 2025 -- May 2026}
-  {Loan for India}{Mumbai, India}
-  \resumeItemListStart
-${experienceBullets}
-  \resumeItemListEnd
-\resumeSubHeadingListEnd
-
+${experienceSection}
 % ----------PROJECTS----------
 \section{Projects}
 \resumeSubHeadingListStart
 ${projectsBlock}
 \resumeSubHeadingListEnd
 
-% ----------EDUCATION----------
-\section{Education}
-\resumeSubHeadingListStart
-\resumeSubheading
-  {Thadomal Shahani Engineering College}{Expected ${e(owner.education.grad)}}
-  {B.E. in ${e(owner.education.degree)} (CGPA ${e(owner.education.cgpa)})}{}
-\resumeSubHeadingListEnd
-
+${educationSection}
 \end{document}
 `;
 }

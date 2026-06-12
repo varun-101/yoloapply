@@ -1,6 +1,7 @@
 import { chatJson, deAi } from "./llm";
-import { owner } from "./owner";
-import { PROJECT_BANK } from "./projects";
+import { getProfile } from "./profile";
+import { getProjectBank } from "./projectBank";
+import { getDeepseekKey } from "./credentials";
 
 // A field as seen by the content script.
 export interface FormFieldSpec {
@@ -66,26 +67,31 @@ interface MapInput {
   role?: string;
 }
 
-export async function mapAutofill(input: MapInput): Promise<MappedField[]> {
+export async function mapAutofill(userId: string, input: MapInput): Promise<MappedField[]> {
+  const [profile, projectBank, apiKey] = await Promise.all([
+    getProfile(userId),
+    getProjectBank(userId),
+    getDeepseekKey(userId),
+  ]);
   const candidate = {
-    name: owner.name,
-    firstName: owner.name.split(" ")[0],
-    lastName: owner.name.split(" ").slice(1).join(" "),
-    email: owner.email,
-    phone: owner.phone,
-    github: owner.github,
-    linkedin: owner.linkedin,
-    portfolio: owner.portfolio,
-    city: owner.city,
-    country: owner.country,
-    location: `${owner.city}, ${owner.country}`,
-    yearsOfExperience: owner.yearsOfExperience,
-    education: owner.education,
-    currentRole: owner.experience[0]?.title ?? "",
-    currentCompany: owner.experience[0]?.company ?? "",
-    experience: owner.experience,
-    extras: owner.extras,
-    projects: PROJECT_BANK.map((p) => ({
+    name: profile.name,
+    firstName: profile.name.split(" ")[0],
+    lastName: profile.name.split(" ").slice(1).join(" "),
+    email: profile.email,
+    phone: profile.phone,
+    github: profile.github,
+    linkedin: profile.linkedin,
+    portfolio: profile.portfolio,
+    city: profile.city,
+    country: profile.country,
+    location: [profile.city, profile.country].filter(Boolean).join(", "),
+    yearsOfExperience: profile.yearsOfExperience,
+    education: profile.education,
+    currentRole: profile.experience[0]?.title ?? "",
+    currentCompany: profile.experience[0]?.company ?? "",
+    experience: profile.experience,
+    extras: profile.extras,
+    projects: projectBank.map((p) => ({
       title: p.title,
       oneLiner: p.oneLiner,
       problem: p.problem,
@@ -109,6 +115,7 @@ ${JSON.stringify(input.fields, null, 2)}
 Return the JSON mapping with one entry per field id. Remember: selects must use an exact option string; never invent facts; skip anything sensitive or unknowable.`;
 
   const out = await chatJson<{ fields: MappedField[] }>({
+    apiKey,
     system: SYSTEM,
     user: userPrompt,
     maxTokens: 8192,

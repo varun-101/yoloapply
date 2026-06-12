@@ -1,12 +1,14 @@
 import { prisma } from "../db";
 import { htmlToText } from "../extractJob";
-import { LOCATION_KEYWORDS, locationMatches, titleMatches } from "./config";
+import { titleMatches, locationMatches, type SearchPrefs } from "../searchPrefs";
 import type { FetchResult, RawLead } from "./types";
 
 // Official, unauthenticated job-board APIs. Companies come from the AtsCompany
-// table (seeded from the kalil0321/ats-scrapers dataset, filtered to boards
-// with India postings — scripts/seed-ats-companies.ts). These boards list every
-// open role, so the keyword + location filters from config.ts apply here.
+// table (seeded from the kalil0321/ats-scrapers dataset — see
+// scripts/seed-ats-companies.ts). These boards list every open role, so a
+// global prefilter applies here: a posting is kept if it matches ANY
+// participating user's keyword/location prefs (each user's own filters run
+// again at fan-out).
 
 const CONCURRENCY = 12;
 const TIMEOUT_MS = 20_000;
@@ -21,6 +23,14 @@ const MAX_JD_FETCHES_PER_BOARD = 25;
 interface BoardCompany {
   name: string;
   slug: string;
+}
+
+// True when the posting matches at least one participating user's filters.
+type LeadMatcher = (title: string, location: string | undefined, isRemote?: boolean) => boolean;
+
+function anyUserMatcher(prefsList: SearchPrefs[]): LeadMatcher {
+  return (title, location, isRemote) =>
+    prefsList.some((p) => titleMatches(p, title) && locationMatches(p, location, isRemote));
 }
 
 function get(url: string): Promise<Response> {
@@ -55,16 +65,18 @@ interface GreenhouseJob {
   updated_at?: string;
 }
 
-async function fetchGreenhouse(entry: BoardCompany, seenIds: ReadonlySet<string>): Promise<RawLead[]> {
+async function fetchGreenhouse(
+  entry: BoardCompany,
+  matches: LeadMatcher,
+  seenIds: ReadonlySet<string>
+): Promise<RawLead[]> {
   // List without content — the matched jobs get a detail fetch below. Pulling
   // content board-wide would download every JD on every board on every scan.
   const res = await get(`https://boards-api.greenhouse.io/v1/boards/${entry.slug}/jobs`);
   if (!res.ok) throw new Error(`${entry.slug}: HTTP ${res.status}`);
   const json = (await res.json()) as { jobs: GreenhouseJob[] };
 
-  const matched = json.jobs.filter(
-    (j) => titleMatches(j.title) && locationMatches(j.location?.name)
-  );
+  const matched = json.jobs.filter((j) => matches(j.title, j.location?.name));
 
   let jdFetches = 0;
   const leads: RawLead[] = [];
@@ -95,7 +107,11 @@ async function fetchGreenhouse(entry: BoardCompany, seenIds: ReadonlySet<string>
   return leads;
 }
 
-async function fetchLever(entry: BoardCompany, _seenIds: ReadonlySet<string>): Promise<RawLead[]> {
+async function fetchLever(
+  entry: BoardCompany,
+  matches: LeadMatcher,
+  _seenIds: ReadonlySet<string>
+): Promise<RawLead[]> {
   const res = await get(`https://api.lever.co/v0/postings/${entry.slug}?mode=json`);
   if (!res.ok) throw new Error(`${entry.slug}: HTTP ${res.status}`);
   const json = (await res.json()) as {
@@ -107,7 +123,7 @@ async function fetchLever(entry: BoardCompany, _seenIds: ReadonlySet<string>): P
     categories?: { location?: string; commitment?: string };
   }[];
   return json
-    .filter((j) => titleMatches(j.text) && locationMatches(j.categories?.location))
+    .filter((j) => matches(j.text, j.categories?.location))
     .map((j) => ({
       source: "lever",
       externalId: j.id,
@@ -121,7 +137,11 @@ async function fetchLever(entry: BoardCompany, _seenIds: ReadonlySet<string>): P
     }));
 }
 
-async function fetchAshby(entry: BoardCompany, _seenIds: ReadonlySet<string>): Promise<RawLead[]> {
+async function fetchAshby(
+  entry: BoardCompany,
+  matches: LeadMatcher,
+  _seenIds: ReadonlySet<string>
+): Promise<RawLead[]> {
   const res = await get(`https://api.ashbyhq.com/posting-api/job-board/${entry.slug}`);
   if (!res.ok) throw new Error(`${entry.slug}: HTTP ${res.status}`);
   const json = (await res.json()) as {
@@ -139,10 +159,7 @@ async function fetchAshby(entry: BoardCompany, _seenIds: ReadonlySet<string>): P
     }[];
   };
   return json.jobs
-    .filter(
-      (j) =>
-        j.isListed !== false && titleMatches(j.title) && locationMatches(j.location, j.isRemote)
-    )
+    .filter((j) => j.isListed !== false && matches(j.title, j.location, j.isRemote))
     .map((j) => ({
       source: "ashby",
       externalId: j.id,
@@ -153,9 +170,9 @@ async function fetchAshby(entry: BoardCompany, _seenIds: ReadonlySet<string>): P
       jdText: j.descriptionPlain?.trim() || undefined,
       jobType: normalizeJobType(j.employmentType),
       postedAt: j.publishedAt ? new Date(j.publishedAt) : undefined,
-      // Ashby marks remote explicitly; surface it in the location string so the
-      // shared location filter (and the UI) can see it.
-      ...(j.isRemote && !LOCATION_KEYWORDS.some((k) => (j.location ?? "").toLowerCase().includes(k))
+      // Ashby marks remote explicitly; surface it in the location string so
+      // the per-user location filters (and the UI) can see it.
+      ...(j.isRemote && !/remote/i.test(j.location ?? "")
         ? { location: [j.location, "Remote"].filter(Boolean).join(" · ") }
         : {}),
     }));
@@ -173,10 +190,19 @@ function summarizeErrors(errors: string[]): string | undefined {
   return `${errors.slice(0, 3).join("; ")} (+${errors.length - 3} more boards failed)`;
 }
 
-// `seenIds` ("source::externalId" of already-ingested leads) lets the
-// greenhouse fetcher skip JD detail requests for jobs the pipeline will
-// dedupe anyway.
-export async function fetchAtsLeads(seenIds: ReadonlySet<string> = new Set()): Promise<FetchResult[]> {
+// `prefsList` = every participating user's search prefs (the union drives the
+// global prefilter). `seenIds` ("source::externalId" already ingested by ALL
+// participants) lets the greenhouse fetcher skip JD detail requests for jobs
+// every fan-out will dedupe anyway.
+export async function fetchAtsLeads(
+  prefsList: SearchPrefs[],
+  seenIds: ReadonlySet<string> = new Set()
+): Promise<FetchResult[]> {
+  // Nobody is scanning — don't hit ~1k boards for leads no one will keep.
+  if (prefsList.length === 0) {
+    return Object.keys(FETCHERS).map((source) => ({ source, leads: [] }));
+  }
+  const matches = anyUserMatcher(prefsList);
   const companies = await prisma.atsCompany.findMany({ where: { active: true } });
 
   const byAts = new Map<string, { leads: RawLead[]; errors: string[] }>();
@@ -200,7 +226,7 @@ export async function fetchAtsLeads(seenIds: ReadonlySet<string> = new Set()): P
           continue;
         }
         try {
-          const leads = await fetcher({ name: c.name, slug: c.slug }, seenIds);
+          const leads = await fetcher({ name: c.name, slug: c.slug }, matches, seenIds);
           bucket.leads.push(...leads);
           bookkeeping.push({
             id: c.id,
@@ -232,7 +258,7 @@ export async function fetchAtsLeads(seenIds: ReadonlySet<string> = new Set()): P
   );
 
   // Persist per-board health/yield in chunked transactions — one update per
-  // board per scan would be ~1k round-trips on SQLite.
+  // board per scan would be ~1k round-trips.
   for (let i = 0; i < bookkeeping.length; i += 100) {
     await prisma.$transaction(
       bookkeeping

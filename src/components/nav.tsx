@@ -8,6 +8,7 @@ import {
   Mail,
   PlusCircle,
   Radar,
+  Settings,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -45,7 +46,10 @@ const SECTIONS: { label: string; items: Item[] }[] = [
   },
   {
     label: "Assets",
-    items: [{ href: "/resume", icon: FileText, label: "Generic resume" }],
+    items: [
+      { href: "/resume", icon: FileText, label: "Generic resume" },
+      { href: "/settings", icon: Settings, label: "Settings" },
+    ],
   },
 ];
 

@@ -3,11 +3,7 @@ node_modules
 out
 .env
 .env.local
-dev.db
-dev.db-journal
-prisma/dev.db*
-generated/
-storage/
+eng.traineddata
 playwright-report
 test-results
 .DS_Store

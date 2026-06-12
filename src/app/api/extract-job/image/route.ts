@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractFromImage } from "@/lib/extractJob";
+import { requireUser, apiError } from "@/lib/auth";
+import { getDeepseekKey } from "@/lib/credentials";
 
 export const maxDuration = 120;
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
+  let user;
+  let apiKey: string;
+  try {
+    user = await requireUser(req);
+    apiKey = await getDeepseekKey(user.id);
+  } catch (e) {
+    return apiError(e);
+  }
+
   let buf: Buffer;
   let mimeType = "image/png";
   try {
@@ -28,7 +39,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const job = await extractFromImage(buf, mimeType);
+    const job = await extractFromImage(apiKey, buf, mimeType);
     return NextResponse.json(job);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

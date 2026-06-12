@@ -3,57 +3,197 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // Supabase pooled (:6543, pgbouncer)
+  directUrl = env("DIRECT_URL") // Supabase direct (:5432) — used by migrate
 }
 
+// ── Users & per-user configuration ──────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  // Nullable so the legacy-data import can create a user before they ever
+  // sign in; ensureUser() claims the row by email match on first login.
+  clerkId   String?  @unique
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  profile      UserProfile?
+  searchPref   SearchPreference?
+  credential   UserCredential?
+  projects     Project[]
+  applications Application[]
+  contacts     Contact[]
+  emails       Email[]
+  jobLeads     JobLead[]
+  scanRuns     ScanRun[]
+  files        StoredFile[]
+}
+
+model UserProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name              String
+  email             String // contact email printed on the resume (may differ from login email)
+  phone             String?
+  github            String?
+  githubHandle      String?
+  linkedin          String?
+  linkedinHandle    String?
+  portfolio         String?
+  city              String?
+  country           String?
+  yearsOfExperience String?
+  education         Json? // { degree, school, cgpa, grad }
+  experience        Json   @default("[]") // [{ title, company, period, bullets: string[] }]
+  extras            Json   @default("[]") // [{ title, org, period, summary }]
+  updatedAt         DateTime @updatedAt
+}
+
+// Per-user project bank (replaces the hardcoded PROJECT_BANK module).
+model Project {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  slug      String
+  title     String
+  subtitle  String?
+  tagline   String?
+  oneLiner  String
+  problem   String?
+  approach  String?
+  outcome   String?
+  techStack String[]
+  repoUrl   String?
+  liveUrl   String?
+  year      String?
+  featured  Boolean @default(false)
+  sortOrder Int     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, slug])
+}
+
+// Per-user discovery filters (replaces src/lib/discovery/config.ts).
+model SearchPreference {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  includeKeywords  String[]
+  excludeKeywords  String[]
+  locationKeywords String[]
+  discoveryEnabled Boolean  @default(false) // off until the user saves locations
+  updatedAt        DateTime @updatedAt
+}
+
+// Per-user secrets: BYO DeepSeek key + SMTP creds (AES-256-GCM via
+// src/lib/crypto.ts) and the hashed extension API token.
+model UserCredential {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  deepseekKeyEnc String?
+  smtpHost       String?
+  smtpPort       Int?
+  smtpUser       String? // an email address — not secret
+  smtpPassEnc    String?
+  smtpFromName   String?
+
+  extensionTokenHash   String? @unique // sha256 hex of the full "yolo_…" token
+  extensionTokenPrefix String? // first chars, display only
+  updatedAt            DateTime @updatedAt
+}
+
+// Metadata for files living in the Supabase Storage bucket
+// ({userId}/applications/{appId}/{kind} and {userId}/generic-resume.pdf).
+model StoredFile {
+  id            String       @id @default(cuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  kind       String // "resume_pdf" | "resume_tex" | "cover_letter_pdf" | "generic_resume"
+  filename   String
+  mimeType   String
+  size       Int
+  bucketPath String @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // NULL applicationIds are distinct in Postgres — generic_resume uniqueness
+  // is enforced in code (src/lib/files.ts deletes before insert).
+  @@unique([applicationId, kind])
+  @@index([userId, kind])
+}
+
+// ── Applications & outreach ─────────────────────────────────────────────────
+
 model Application {
-  id            String   @id @default(cuid())
-  company       String
-  role          String
-  source        String   // "linkedin" | "portal" | "manual" | "cold_email"
-  jdUrl         String?
-  jdText        String?
-  location      String?
-  status        String   @default("draft") // draft | personalized | applied | replied | interview | offer | rejected | closed
-  resumeTexPath String?
-  resumePdfPath String?
-  personalizeStatus String?  // null | "running" | "failed" — drives a persistent loading state
-  coverLetterText String?
-  coverLetterPdfPath String?
-  applyUrl      String?
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  appliedAt     DateTime?
-  events        Event[]
-  contacts      Contact[]
-  emails        Email[]
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  company           String
+  role              String
+  source            String // "linkedin" | "portal" | "manual" | "cold_email"
+  jdUrl             String?
+  jdText            String?
+  location          String?
+  status            String  @default("draft") // draft | personalized | applied | replied | interview | offer | rejected | closed
+  personalizeStatus String? // null | "running" | "failed" — drives a persistent loading state
+  coverLetterText   String?
+  applyUrl          String?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  appliedAt         DateTime?
+  events            Event[]
+  contacts          Contact[]
+  emails            Email[]
+  files             StoredFile[]
+
+  @@index([userId, status])
 }
 
 model Contact {
-  id            String   @id @default(cuid())
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   name          String
   title         String?
   company       String
   email         String?
   linkedinUrl   String?
-  source        String?  // "manual" | "scrape" | "cold_email_target"
+  source        String? // "manual" | "scrape" | "cold_email_target"
   notes         String?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime     @default(now())
   applicationId String?
   application   Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
   emails        Email[]
+
+  @@index([userId])
 }
 
 model Email {
-  id            String   @id @default(cuid())
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   toAddress     String
   toName        String?
   fromAddress   String
   subject       String
   body          String
-  status        String   @default("draft") // draft | sent | replied | bounced | failed
+  status        String    @default("draft") // draft | sent | replied | bounced | failed
   sentAt        DateTime?
   messageId     String?
   errorMessage  String?
@@ -62,63 +202,91 @@ model Email {
   contactId     String?
   contact       Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
   // Full draft-page context, persisted so the contact detail view can reconstruct the original draft.
-  recipientTitle String?
+  recipientTitle   String?
   recipientCompany String?
-  roleTarget    String?  // role they were hiring for (if specified)
-  hookContext   String?  // the user-supplied hook / recent news / context
-  rationale     String?  // AI's one-line explanation of which proof point was chosen
-  attachSource  String?  // "personalized" | "generic" | "none"
-  createdAt     DateTime @default(now())
+  roleTarget       String? // role they were hiring for (if specified)
+  hookContext      String? // the user-supplied hook / recent news / context
+  rationale        String? // AI's one-line explanation of which proof point was chosen
+  attachSource     String? // "personalized" | "generic" | "none"
+  createdAt        DateTime @default(now())
+
+  @@index([userId])
 }
 
-model ScanRun {
+// ── Discovery ───────────────────────────────────────────────────────────────
+
+// One global source-fetch per tick: the four sources are fetched ONCE, then
+// fanned out per user (each user's filters/dedupe/scoring → their ScanRun).
+model FetchRun {
   id          String    @id @default(cuid())
   startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  trigger     String    @default("cron") // "cron" | "manual" | "script"
+  sourceStats String? // JSON SourceStats[] — per-source fetched/errors
+  error       String?
+  scanRuns    ScanRun[]
+}
+
+// A user's view of one discovery pass (their filter/ingest/score results).
+model ScanRun {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  startedAt   DateTime  @default(now())
   finishedAt  DateTime? // null while running (or if the process died mid-run)
-  trigger     String    @default("dashboard") // "dashboard" | "script"
+  trigger     String    @default("manual") // "manual" | "cron" | "script"
   created     Int       @default(0)
   scored      Int       @default(0)
-  sourceStats String?   // JSON SourceStats[] — per-source fetched/created/dupes/errors
-  error       String?   // run-level failure or scoring error
+  sourceStats String? // JSON SourceStats[] — per-source fetched/created/dupes/errors
+  error       String? // run-level failure or scoring error
+  fetchRunId  String?
+  fetchRun    FetchRun? @relation(fields: [fetchRunId], references: [id], onDelete: SetNull)
   leads       JobLead[]
+
+  @@index([userId, startedAt])
 }
 
 model JobLead {
-  id            String   @id @default(cuid())
-  source        String   // "sheet" | "jobfound" | (later: "greenhouse" | "lever" | "ashby" | "hn")
-  externalId    String   // hygraph post id; for the sheet, a hash of company+role+date
-  sources       String?  // comma-separated list when the same posting was found in multiple sources
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  source        String // "sheet" | "jobfound" | "greenhouse" | "lever" | "ashby" | "hn"
+  externalId    String // hygraph post id; for the sheet, a hash of company+role+date
+  sources       String? // comma-separated list when the same posting was found in multiple sources
   company       String
   role          String
   location      String?
-  url           String?  // raw apply URL (sheet rows occasionally have none)
-  canonicalUrl  String?  // tracking params stripped — cross-source dedupe key
+  url           String? // raw apply URL (sheet rows occasionally have none)
+  canonicalUrl  String? // tracking params stripped — cross-source dedupe key
   jdText        String?
   salary        String?
-  jobType       String?  // "Full Time" | "Internship"
+  jobType       String? // "Full Time" | "Internship"
   experience    String?
   skills        String?
   postedAt      DateTime?
-  contactEmail  String?  // hiring contact when the source includes one (HN posts often do)
-  score         Int?     // LLM fit score 0-100 (phase 2)
+  contactEmail  String? // hiring contact when the source includes one (HN posts often do)
+  score         Int? // LLM fit score 0-100
   scoreReason   String?
-  status        String   @default("new") // new | promoted | dismissed
-  applicationId String?  // set on promote
-  scanRunId     String?  // the scan that ingested this lead (null for pre-history leads)
-  scanRun       ScanRun? @relation(fields: [scanRunId], references: [id], onDelete: SetNull)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  status        String    @default("new") // new | promoted | dismissed
+  applicationId String? // set on promote
+  scanRunId     String? // the scan that ingested this lead (null for pre-history leads)
+  scanRun       ScanRun?  @relation(fields: [scanRunId], references: [id], onDelete: SetNull)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  @@unique([source, externalId])
-  @@index([canonicalUrl])
-  @@index([status, postedAt])
+  @@unique([userId, source, externalId])
+  @@index([userId, canonicalUrl])
+  @@index([userId, status, postedAt])
   @@index([scanRunId])
 }
 
+// Shared global ATS watchlist — board health/yield is tracked across all users.
 model AtsCompany {
   id                  String    @id @default(cuid())
-  ats                 String    // "greenhouse" | "lever" | "ashby"
-  slug                String    // public board API token
+  ats                 String // "greenhouse" | "lever" | "ashby"
+  slug                String // public board API token
   name                String
   active              Boolean   @default(true) // false = demoted (dead board), skipped by scans
   consecutiveFailures Int       @default(0) // fetch failures in a row; demoted at threshold
@@ -134,10 +302,10 @@ model AtsCompany {
 }
 
 model Event {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
   applicationId String
   application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  type          String   // "status_change" | "personalized" | "applied" | "email_sent" | "note"
+  type          String // "status_change" | "personalized" | "applied" | "email_sent" | "note"
   detail        String?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime    @default(now())
 }

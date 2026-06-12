@@ -12,15 +12,14 @@ API-key auth, new endpoints) live in the main app under `src/` and `src/app/api/
    cd D:\yoloapply
    npm run dev      # http://localhost:3001
    ```
-2. Set a shared secret in `D:\yoloapply\.env`:
-   ```
-   EXTENSION_API_KEY=dev-secret-change-me
-   ```
+2. Sign in to the web app and generate your personal API token under
+   **Settings → Credentials → Chrome extension token** (it's shown exactly
+   once — copy it).
 3. In Chrome, open `chrome://extensions`, toggle **Developer mode** on, click
    **Load unpacked**, and pick `D:\yoloapply\extension`.
 4. The Options page opens automatically on first install. Set:
-   - **Backend URL:** `http://localhost:3001`
-   - **API key:** the same value you put in `.env`
+   - **Backend URL:** `http://localhost:3001` (or the deployed URL)
+   - **Personal API token:** the `yolo_…` token from step 2
 5. Hit **Save** then **Test connection** — you should see "Connection looks good."
 
 ## What it does
@@ -72,9 +71,10 @@ extension/
 
 The backend additions are:
 
-- `src/middleware.ts` — adds CORS for `/api/*` and requires
-  `Authorization: Bearer <EXTENSION_API_KEY>` for cross-origin (extension)
-  requests. Same-origin web-app calls keep working unchanged.
+- `src/middleware.ts` — adds CORS for `/api/*` from extension origins; the
+  route handlers authenticate `Authorization: Bearer yolo_…` per-user tokens
+  (hashed in the DB, managed in Settings → Credentials). Same-origin web-app
+  calls authenticate through the Clerk session instead.
 - `src/lib/answerQuestion.ts` — LLM call that drafts a free-text form answer
   constrained to the candidate's facts.
 - `src/app/api/extract-job/dom/route.ts` — accepts `{ text, url }` from the
@@ -93,5 +93,6 @@ and the Next.js app keeps working.
 - **Read across origins outside the active tab.** No background scraping of
   other tabs.
 - **Persist anything sensitive in `chrome.storage.sync` besides the backend
-  URL + API key.** All applications, contacts, and resumes live in the
-  Next.js DB / file system.
+  URL + your API token.** All applications, contacts, and resumes live in the
+  YOLOapply database / storage bucket. Revoke the token any time from
+  Settings → Credentials.

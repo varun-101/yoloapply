@@ -1,18 +1,26 @@
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 
-// Origins allowed to call /api/* cross-origin. Extension IDs differ between dev
-// and prod, so we accept any `chrome-extension://*` origin and verify auth via
-// Bearer token instead.
-function isAllowedCrossOrigin(origin: string | null): boolean {
+// Two auth surfaces:
+//  - Browser sessions: Clerk. Pages redirect to /sign-in; /api/* handlers
+//    return 401 JSON via requireUser() (src/lib/auth.ts).
+//  - Chrome extension: cross-origin Bearer token, validated in route handlers
+//    (this middleware runs on the Edge runtime — no Prisma here). Extension
+//    requests must NEVER hit Clerk's protect(), which would answer a fetch
+//    with an HTML redirect, so the origin branch comes first.
+
+const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);
+
+// Extension IDs differ between dev and prod, so we accept any extension
+// origin and rely on the Bearer token for auth.
+function isExtensionOrigin(origin: string | null): boolean {
   if (!origin) return false;
-  if (origin.startsWith("chrome-extension://")) return true;
-  if (origin.startsWith("moz-extension://")) return true;
-  return false;
+  return origin.startsWith("chrome-extension://") || origin.startsWith("moz-extension://");
 }
 
 function corsHeaders(origin: string | null): Headers {
   const h = new Headers();
-  if (origin && isAllowedCrossOrigin(origin)) {
+  if (origin && isExtensionOrigin(origin)) {
     h.set("Access-Control-Allow-Origin", origin);
     h.set("Vary", "Origin");
   }
@@ -34,53 +42,47 @@ function isSameOrigin(req: NextRequest): boolean {
   }
 }
 
-export function middleware(req: NextRequest): NextResponse {
+export default clerkMiddleware(async (auth, req) => {
   const origin = req.headers.get("origin");
 
-  // CORS preflight — answer immediately.
+  // CORS preflight — answer before Clerk gets involved (no auth on OPTIONS).
   if (req.method === "OPTIONS") {
     return new NextResponse(null, { status: 204, headers: corsHeaders(origin) });
   }
 
-  // Same-origin requests: no auth needed (web app at localhost:3001).
-  if (isSameOrigin(req)) {
+  // Extension traffic: attach CORS and pass through; the route handler
+  // resolves the Bearer token to a user.
+  if (isExtensionOrigin(origin)) {
     const res = NextResponse.next();
     corsHeaders(origin).forEach((v, k) => res.headers.set(k, v));
     return res;
   }
 
-  // Cross-origin: only allow known extension origins, and require Bearer auth.
-  if (!isAllowedCrossOrigin(origin)) {
+  // Any other cross-origin caller is rejected outright.
+  if (!isSameOrigin(req)) {
     return new NextResponse(JSON.stringify({ error: "cross-origin not allowed" }), {
       status: 403,
-      headers: { "Content-Type": "application/json", ...Object.fromEntries(corsHeaders(origin)) },
+      headers: { "Content-Type": "application/json" },
     });
   }
 
-  const expected = process.env.EXTENSION_API_KEY;
-  if (!expected) {
-    return new NextResponse(
-      JSON.stringify({ error: "EXTENSION_API_KEY not configured on the server" }),
-      {
-        status: 503,
-        headers: { "Content-Type": "application/json", ...Object.fromEntries(corsHeaders(origin)) },
-      }
-    );
-  }
-  const auth = req.headers.get("authorization") ?? "";
-  const presented = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (presented !== expected) {
-    return new NextResponse(JSON.stringify({ error: "invalid api key" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json", ...Object.fromEntries(corsHeaders(origin)) },
-    });
+  // API routes fall through — handlers respond 401 JSON via requireUser(),
+  // which is friendlier to fetch() callers than a redirect.
+  if (req.nextUrl.pathname.startsWith("/api")) {
+    return NextResponse.next();
   }
 
-  const res = NextResponse.next();
-  corsHeaders(origin).forEach((v, k) => res.headers.set(k, v));
-  return res;
-}
+  // Pages: redirect signed-out users to /sign-in.
+  if (!isPublicRoute(req)) {
+    await auth.protect();
+  }
+  return NextResponse.next();
+});
 
 export const config = {
-  matcher: "/api/:path*",
+  matcher: [
+    // All pages except Next internals and static assets.
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/api/:path*",
+  ],
 };

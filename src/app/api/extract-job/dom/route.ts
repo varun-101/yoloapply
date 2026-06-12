@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractFromText } from "@/lib/extractJob";
+import { requireUser, apiError } from "@/lib/auth";
+import { getDeepseekKey } from "@/lib/credentials";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -8,20 +10,21 @@ export const maxDuration = 60;
 // Avoids the server-side fetch (which LinkedIn/Workday block) since the user is
 // already authenticated in their own browser.
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({}));
-  const text = typeof body.text === "string" ? body.text : "";
-  const url = typeof body.url === "string" ? body.url : undefined;
-  if (text.trim().length < 200) {
-    return NextResponse.json(
-      { error: "page text is too short — not enough to extract a job posting" },
-      { status: 400 }
-    );
-  }
   try {
-    const job = await extractFromText(text, url);
+    const user = await requireUser(req);
+    const apiKey = await getDeepseekKey(user.id);
+    const body = await req.json().catch(() => ({}));
+    const text = typeof body.text === "string" ? body.text : "";
+    const url = typeof body.url === "string" ? body.url : undefined;
+    if (text.trim().length < 200) {
+      return NextResponse.json(
+        { error: "page text is too short — not enough to extract a job posting" },
+        { status: 400 }
+      );
+    }
+    const job = await extractFromText(apiKey, text, url);
     return NextResponse.json(job);
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (e) {
+    return apiError(e);
   }
 }

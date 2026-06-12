@@ -1,6 +1,7 @@
 import { chatJson } from "./llm";
-import { PROJECT_BANK, ProjectBankItem } from "./projects";
-import { owner } from "./owner";
+import { getProjectBank, ProjectBankItem } from "./projectBank";
+import { getProfile, CandidateProfile } from "./profile";
+import { getDeepseekKey } from "./credentials";
 import { ResumeDraft } from "./latex";
 
 const SYSTEM_PROMPT = `You are an expert technical resume writer helping a software engineer tailor their resume to a specific job description.
@@ -23,7 +24,7 @@ function tightnessRules(t: 0 | 1 | 2): string {
     return [
       "- Pick 3-4 projects from the bank, 2-3 bullets each, each bullet <= 28 words.",
       "- Summary: 2 sentences.",
-      "- Loan-for-India experience: 2-3 bullets.",
+      "- Each experience entry: 2-3 bullets.",
     ].join("\n");
   }
   if (t === 1) {
@@ -31,7 +32,7 @@ function tightnessRules(t: 0 | 1 | 2): string {
       "- The previous draft overflowed one page. Be tighter.",
       "- Pick exactly 3 projects, exactly 2 bullets each, each bullet <= 22 words.",
       "- Summary: 1 sentence, <= 30 words.",
-      "- Loan-for-India experience: exactly 2 bullets, each <= 22 words.",
+      "- Each experience entry: exactly 2 bullets, each <= 22 words.",
       "- Each skills group: at most 6 items.",
     ].join("\n");
   }
@@ -39,24 +40,46 @@ function tightnessRules(t: 0 | 1 | 2): string {
     "- The previous drafts still overflowed one page. Be very terse.",
     "- Pick exactly 3 projects, exactly 1 bullet each, each bullet <= 24 words and information-dense.",
     "- Summary: 1 sentence, <= 24 words.",
-    "- Loan-for-India experience: exactly 2 bullets, each <= 18 words.",
+    "- Each experience entry: exactly 2 bullets, each <= 18 words.",
     "- Each skills group: at most 5 items. Drop low-value groups.",
   ].join("\n");
 }
 
-export async function personalizeResume(input: PersonalizeInput): Promise<ResumeDraft> {
+// Loaded once per personalize run and reused across one-page retries.
+export interface PersonalizeContext {
+  profile: CandidateProfile;
+  projectBank: ProjectBankItem[];
+  apiKey: string;
+}
+
+export async function loadPersonalizeContext(userId: string): Promise<PersonalizeContext> {
+  const [profile, projectBank, apiKey] = await Promise.all([
+    getProfile(userId),
+    getProjectBank(userId),
+    getDeepseekKey(userId),
+  ]);
+  return { profile, projectBank, apiKey };
+}
+
+export async function personalizeResume(
+  ctx: PersonalizeContext,
+  input: PersonalizeInput
+): Promise<ResumeDraft> {
+  const { profile, projectBank, apiKey } = ctx;
   const candidate = {
-    name: owner.name,
-    education: owner.education,
-    experience: owner.experience,
-    extras: owner.extras,
+    name: profile.name,
+    education: profile.education,
+    experience: profile.experience,
+    extras: profile.extras,
   };
+
+  const slugEnum = projectBank.map((p) => JSON.stringify(p.slug)).join(" | ") || '"<slug>"';
 
   const userPrompt = `# CANDIDATE
 ${JSON.stringify(candidate, null, 2)}
 
 # PROJECT BANK (pick 3-4 most relevant)
-${JSON.stringify(PROJECT_BANK, null, 2)}
+${JSON.stringify(projectBank, null, 2)}
 
 # TARGET JOB
 Company: ${input.company}
@@ -76,7 +99,7 @@ ${tightnessRules(input.tightness ?? 0)}
 2) For each project, write bullets that match the JD's vocabulary while staying faithful to its problem/approach/outcome. Lead with action verbs. Use real metrics from the bank.
 3) Write a "summary" tailored to this role referencing concrete proof points the candidate has. No buzzword soup.
 4) Re-order skill groups so JD-relevant skills appear first. You may add a "Highlights" group at the front with 4-6 technologies straight from the JD that the candidate genuinely has. Do not invent skills.
-5) Rewrite the Loan-for-India internship bullets emphasizing aspects most relevant to this JD. Stay truthful to: backend infrastructure for home loans, Java, PostgreSQL, partner-bank integrations (HDFC, SBI), automating loan approvals.
+5) For EACH entry in the candidate's experience array (by zero-based index), rewrite its bullets emphasizing the aspects most relevant to this JD. Stay strictly truthful to the facts in the supplied bullets — rephrase, never invent.
 
 # OUTPUT FORMAT (strict JSON)
 {
@@ -86,20 +109,23 @@ ${tightnessRules(input.tightness ?? 0)}
   ],
   "selectedProjects": [
     {
-      "slug": "homeheart" | "hackorchestrate" | "devmeet" | "gmailotp" | "expensesharing" | "aicrawler",
+      "slug": ${slugEnum},
       "bullets": ["...", "...", "..."]
     }
   ],
-  "experienceBullets": ["...", "...", "..."]
+  "experienceBullets": [
+    { "index": 0, "bullets": ["...", "..."] }
+  ]
 }`;
 
   type ModelOut = {
     summary: string;
     skillsOrdered: { group: string; items: string[] }[];
     selectedProjects: { slug: string; bullets: string[] }[];
-    experienceBullets: string[];
+    experienceBullets: { index: number; bullets: string[] }[];
   };
   const parsed = await chatJson<ModelOut>({
+    apiKey,
     system: SYSTEM_PROMPT,
     user: userPrompt,
     maxTokens: 8192,
@@ -109,7 +135,7 @@ ${tightnessRules(input.tightness ?? 0)}
   // Hydrate selected projects with their stable metadata from the bank.
   const selectedProjects = parsed.selectedProjects
     .map((sp) => {
-      const bank = PROJECT_BANK.find((p) => p.slug === sp.slug);
+      const bank = projectBank.find((p) => p.slug === sp.slug);
       if (!bank) return null;
       return {
         slug: bank.slug,
@@ -124,7 +150,7 @@ ${tightnessRules(input.tightness ?? 0)}
 
   if (selectedProjects.length === 0) {
     // Fallback: pick the 3 featured projects so we never produce an empty resume.
-    const fallback: ProjectBankItem[] = PROJECT_BANK.filter((p) => p.featured).slice(0, 3);
+    const fallback: ProjectBankItem[] = projectBank.filter((p) => p.featured).slice(0, 3);
     for (const f of fallback) {
       selectedProjects.push({
         slug: f.slug,
@@ -141,6 +167,6 @@ ${tightnessRules(input.tightness ?? 0)}
     summary: parsed.summary,
     skillsOrdered: parsed.skillsOrdered,
     selectedProjects,
-    experienceBullets: parsed.experienceBullets,
+    experienceBullets: Array.isArray(parsed.experienceBullets) ? parsed.experienceBullets : [],
   };
 }

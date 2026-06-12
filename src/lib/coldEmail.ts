@@ -1,6 +1,7 @@
 import { chatJson, deAi } from "./llm";
-import { owner } from "./owner";
-import { PROJECT_BANK } from "./projects";
+import { getProfile } from "./profile";
+import { getProjectBank } from "./projectBank";
+import { getDeepseekKey } from "./credentials";
 
 const SYSTEM = `You write cold outreach emails on behalf of an early-career software engineer applying to startups and tech companies. The tone is sincere, specific, and confident — never groveling, never spammy. The recipient is a senior leader (CEO, founder, head of engineering) — they get dozens of these a week, so the email must earn the next sentence with the first one.
 
@@ -15,17 +16,17 @@ Constraints:
 - No "I hope this email finds you well", no "I am writing to". Skip preambles.
 - Output STRICT JSON only.
 
-Two examples of the expected quality (style references — adapt the content to the actual candidate, company, and role; never copy these claims):
+Two examples of the expected quality. IMPORTANT: the examples describe a DIFFERENT, FICTIONAL candidate ("Priya", who worked at "FinStack") — they are style references ONLY. Every claim in YOUR email must come from the actual candidate data provided below; never reuse the example's employers, projects, or claims:
 
 Example 1 — a specific listing is known and the candidate already applied:
-subject: "SDE-1 Backend application + the loan infra I shipped as an intern"
-body: "Hi Anita,\\n\\nI just applied for your SDE-1 Backend opening (https://acmecorp.keka.com/careers/jobdetails/131288) and wanted to reach out directly. The role asks for PostgreSQL schema design and third-party API integrations, which is most of what I did at Loan for India, where as one of two backend engineers I built the Java services that automate home-loan approvals with HDFC and SBI. If my application makes it to your shortlist, I'd love 15 minutes to walk you through what I shipped.\\n\\nBest,\\nVarun"
+subject: "SDE-1 Backend application + the payment retries I shipped as an intern"
+body: "Hi Anita,\\n\\nI just applied for your SDE-1 Backend opening (https://acmecorp.keka.com/careers/jobdetails/131288) and wanted to reach out directly. The role asks for PostgreSQL schema design and third-party API integrations, which is most of what I did at FinStack, where as one of two backend interns I built the retry pipeline that recovers failed UPI payouts. If my application makes it to your shortlist, I'd love 15 minutes to walk you through what I shipped.\\n\\nBest,\\nPriya"
 
 Example 2 — pure cold outreach, no specific listing:
-subject: "Backend engineer who shipped bank integrations, interested in Acme"
-body: "Hi Rahul,\\n\\nAcme's instant-settlement launch caught my eye because the hardest thing I've built is in the same lane: loan-approval automation with HDFC and SBI at Loan for India, where I was one of two backend engineers designing the PostgreSQL schemas and Java services underneath it. If you're adding early-career backend engineers this year, I'd value 15 minutes to find out where I could plug in.\\n\\nBest,\\nVarun"
+subject: "Backend engineer who shipped payout retries, interested in Acme"
+body: "Hi Rahul,\\n\\nAcme's instant-settlement launch caught my eye because the hardest thing I've built is in the same lane: a UPI payout-retry pipeline at FinStack, where I was one of two backend interns designing the PostgreSQL schemas and services underneath it. If you're adding early-career backend engineers this year, I'd value 15 minutes to find out where I could plug in.\\n\\nBest,\\nPriya"
 
-What makes these work: the subject states a proof point, not a request; the first sentence ties the candidate to the company or listing; the middle sentence is one concrete, verifiable claim mapped to the JD; the ask is small and singular.`;
+What makes these work: the subject states a proof point, not a request; the first sentence ties the candidate to the company or listing; the middle sentence is one concrete, verifiable claim mapped to the JD; the ask is small and singular. Sign off with the ACTUAL candidate's first name.`;
 
 interface JobContext {
   applyUrl?: string;
@@ -49,19 +50,26 @@ export interface ColdEmailDraft {
   rationale: string; // one line explaining why this hook was chosen
 }
 
-export async function draftColdEmail(input: DraftInput): Promise<ColdEmailDraft> {
+export async function draftColdEmail(userId: string, input: DraftInput): Promise<ColdEmailDraft> {
+  const [profile, projectBank, apiKey] = await Promise.all([
+    getProfile(userId),
+    getProjectBank(userId),
+    getDeepseekKey(userId),
+  ]);
   const candidate = {
-    name: owner.name,
-    portfolio: owner.portfolio,
-    github: owner.github,
-    education: owner.education,
-    experience: owner.experience,
-    topProjects: PROJECT_BANK.filter((p) => p.featured).map((p) => ({
-      title: p.title,
-      oneLiner: p.oneLiner,
-      outcome: p.outcome,
-      tech: p.techStack,
-    })),
+    name: profile.name,
+    portfolio: profile.portfolio,
+    github: profile.github,
+    education: profile.education,
+    experience: profile.experience,
+    topProjects: projectBank
+      .filter((p) => p.featured)
+      .map((p) => ({
+        title: p.title,
+        oneLiner: p.oneLiner,
+        outcome: p.outcome,
+        tech: p.techStack,
+      })),
   };
 
   const job = input.jobContext;
@@ -89,6 +97,7 @@ Output STRICT JSON:
 }`;
 
   const draft = await chatJson<ColdEmailDraft>({
+    apiKey,
     system: SYSTEM,
     user: userPrompt,
     maxTokens: 4096,

@@ -1,14 +1,15 @@
-import { chatJson } from "../llm";
+import { chatJson, serverApiKey } from "../llm";
 import { htmlToText } from "../extractJob";
-import { prisma } from "../db";
 import type { FetchResult, RawLead } from "./types";
 
 // Hacker News "Ask HN: Who is hiring?" — monthly thread, startup-heavy, and the
 // posts frequently include a founder's contact email, which feeds the
 // cold-email flow. Comments are free text, so unlike the structured sources
-// each new post costs one LLM extraction; the per-run cap below bounds that,
-// and already-ingested comment ids are skipped, so the backlog drains across
-// scheduled runs.
+// each new post costs one LLM extraction. Extraction is global work (one parse
+// serves every user's fan-out), so it runs on the server-level DEEPSEEK_API_KEY
+// — the only remaining use of that env var. The per-run cap below bounds cost,
+// and posts already ingested by every participant are skipped, so the backlog
+// drains across scheduled runs.
 
 const MAX_EXTRACTIONS_PER_RUN = 10;
 const LLM_BATCH = 5;
@@ -56,22 +57,21 @@ async function latestThreadId(): Promise<number> {
   return Number(hit.objectID);
 }
 
-export async function fetchHnLeads(): Promise<FetchResult> {
+// `seenIds` = "source::externalId" keys already ingested by EVERY participant
+// (posts some users lack are re-extracted so their fan-out gets them too).
+export async function fetchHnLeads(seenIds: ReadonlySet<string> = new Set()): Promise<FetchResult> {
   try {
+    if (!process.env.DEEPSEEK_API_KEY) {
+      return { source: "hn", leads: [], error: "server DEEPSEEK_API_KEY not set — HN extraction skipped" };
+    }
     const threadId = await latestThreadId();
     const res = await fetch(`https://hn.algolia.com/api/v1/items/${threadId}`);
     if (!res.ok) throw new Error(`Algolia items returned HTTP ${res.status}`);
     const thread = (await res.json()) as HnItem;
 
-    const known = new Set(
-      (
-        await prisma.jobLead.findMany({ where: { source: "hn" }, select: { externalId: true } })
-      ).map((l) => l.externalId)
-    );
-
     const candidates = (thread.children ?? [])
       .filter((c) => c.text && GEO_RE.test(c.text) && TECH_RE.test(c.text))
-      .filter((c) => !known.has(String(c.id)))
+      .filter((c) => !seenIds.has(`hn::${c.id}`))
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, MAX_EXTRACTIONS_PER_RUN);
 
@@ -82,6 +82,7 @@ export async function fetchHnLeads(): Promise<FetchResult> {
         .map((c) => `## POST id=${c.id}\n${htmlToText(c.text!).slice(0, 1800)}`)
         .join("\n\n");
       const out = await chatJson<{ posts: ExtractedPost[] }>({
+        apiKey: serverApiKey(),
         system: EXTRACT_SYSTEM,
         user: `${user}\n\n# TASK\nParse every post above.`,
         temperature: 0.2,

@@ -341,7 +341,7 @@ export default function DiscoverPage() {
           </span>
           <span>
             Scan in progress
-            {scanProgress?.trigger === "script" ? " (started by the scheduled task)" : ""} —{" "}
+            {scanProgress && scanProgress.trigger !== "manual" ? " (started by the scheduled task)" : ""} —{" "}
             {scanProgress?.phase ?? "starting"}
             {scanProgress?.phase === "fetching sources" &&
               ` (${scanProgress.sourcesDone}/${scanProgress.sourcesTotal} sources done)`}

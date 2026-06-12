@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
+import { requirePageUser } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,18 +13,21 @@ import QuestionAnswerer from "./question-answerer";
 export const dynamic = "force-dynamic";
 
 export default async function AppDetail({ params }: { params: { id: string } }) {
-  const app = await prisma.application.findUnique({
-    where: { id: params.id },
+  const user = await requirePageUser();
+  const app = await prisma.application.findFirst({
+    where: { id: params.id, userId: user.id },
     include: {
       events: { orderBy: { createdAt: "desc" }, take: 20 },
       emails: { orderBy: { createdAt: "desc" } },
       contacts: true,
+      files: { select: { kind: true } },
     },
   });
   if (!app) notFound();
 
-  const hasPdf = !!app.resumePdfPath;
-  const hasCoverLetter = !!app.coverLetterPdfPath;
+  const kinds = new Set(app.files.map((f) => f.kind));
+  const hasPdf = kinds.has("resume_pdf");
+  const hasCoverLetter = kinds.has("cover_letter_pdf");
 
   return (
     <div className="p-8 max-w-6xl mx-auto">

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { requirePageUser } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +10,11 @@ import { PlusCircle } from "lucide-react";
 export const dynamic = "force-dynamic";
 
 export default async function AppsList() {
-  const apps = await prisma.application.findMany({ orderBy: { createdAt: "desc" } });
+  const user = await requirePageUser();
+  const apps = await prisma.application.findMany({
+    where: { userId: user.id },
+    orderBy: { createdAt: "desc" },
+  });
   return (
     <div className="p-8 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">

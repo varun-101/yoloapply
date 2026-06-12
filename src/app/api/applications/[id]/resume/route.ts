@@ -1,32 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { readFile } from "fs/promises";
+import { requireUser, apiError } from "@/lib/auth";
+import { getFile } from "@/lib/files";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const app = await prisma.application.findUnique({ where: { id: params.id } });
-  if (!app) return NextResponse.json({ error: "not found" }, { status: 404 });
+  try {
+    const user = await requireUser(req);
+    const app = await prisma.application.findFirst({
+      where: { id: params.id, userId: user.id },
+      select: { id: true, company: true, role: true },
+    });
+    if (!app) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  const url = new URL(req.url);
-  const format = url.searchParams.get("format") ?? "pdf";
+    const url = new URL(req.url);
+    const format = url.searchParams.get("format") ?? "pdf";
 
-  if (format === "tex") {
-    if (!app.resumeTexPath) return NextResponse.json({ error: "no tex yet" }, { status: 404 });
-    const buf = await readFile(app.resumeTexPath);
-    return new NextResponse(buf, {
+    if (format === "tex") {
+      const file = await getFile(user.id, app.id, "resume_tex");
+      if (!file) return NextResponse.json({ error: "no tex yet" }, { status: 404 });
+      return new NextResponse(new Uint8Array(file.data), {
+        headers: {
+          "Content-Type": "text/x-tex; charset=utf-8",
+          "Content-Disposition": `inline; filename="${app.company}_${app.role}.tex"`,
+        },
+      });
+    }
+
+    const file = await getFile(user.id, app.id, "resume_pdf");
+    if (!file) return NextResponse.json({ error: "no pdf yet" }, { status: 404 });
+    const inline = url.searchParams.get("download") !== "1";
+    return new NextResponse(new Uint8Array(file.data), {
       headers: {
-        "Content-Type": "text/x-tex; charset=utf-8",
-        "Content-Disposition": `inline; filename="${app.company}_${app.role}.tex"`,
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${file.meta.filename}"`,
       },
     });
+  } catch (e) {
+    return apiError(e);
   }
-
-  if (!app.resumePdfPath) return NextResponse.json({ error: "no pdf yet" }, { status: 404 });
-  const buf = await readFile(app.resumePdfPath);
-  const inline = url.searchParams.get("download") !== "1";
-  return new NextResponse(buf, {
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="Varun_Chandwani_${app.company}.pdf"`,
-    },
-  });
 }
