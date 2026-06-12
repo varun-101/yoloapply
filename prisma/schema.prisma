@@ -331,6 +331,15 @@ model AtsCompany {
   @@index([active])
 }
 
+// Singleton row (id=1) — admin sets a shared DeepSeek key with an expiry.
+// Users without their own key fall back to this during the active window.
+model SharedDeepseekKey {
+  id        Int      @id @default(1)
+  keyEnc    String   // AES-256-GCM encrypted via src/lib/crypto.ts
+  expiresAt DateTime
+  updatedAt DateTime @updatedAt
+}
+
 model Event {
   id            String      @id @default(cuid())
   applicationId String

@@ -3,8 +3,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { Loader2, RadarIcon, RefreshCw, ShieldCheck } from "lucide-react";
+import { Key, Loader2, RadarIcon, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 
 interface AdminUser {
   id: string;
@@ -51,12 +52,25 @@ function Toggle({
   );
 }
 
+interface SharedKeyStatus {
+  active: boolean;
+  expiresAt?: string;
+  maskedKey?: string;
+}
+
 export function AdminPanel() {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
+
+  const [sharedKey, setSharedKey] = useState<SharedKeyStatus | null>(null);
+  const [keyInput, setKeyInput] = useState("");
+  const [expiryInput, setExpiryInput] = useState("");
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [keyMsg, setKeyMsg] = useState<string | null>(null);
+  const [keyErr, setKeyErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -68,9 +82,19 @@ export function AdminPanel() {
     }
   }, []);
 
+  const loadSharedKey = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/shared-key");
+      if (res.ok) setSharedKey(await res.json());
+    } catch {
+      // non-critical
+    }
+  }, []);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadSharedKey();
+  }, [load, loadSharedKey]);
 
   async function toggle(u: AdminUser, field: ToggleField) {
     const next = !u[field];
@@ -113,6 +137,47 @@ export function AdminPanel() {
     }
   }
 
+  async function saveSharedKey() {
+    setKeyBusy(true);
+    setKeyErr(null);
+    setKeyMsg(null);
+    try {
+      if (!keyInput) throw new Error("Enter a DeepSeek API key.");
+      if (!expiryInput) throw new Error("Set an expiry date.");
+      // Treat the date as end-of-day UTC so the key stays valid through the chosen date.
+      const expiresAt = new Date(expiryInput + "T23:59:59Z").toISOString();
+      const res = await fetch("/api/admin/shared-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: keyInput, expiresAt }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save");
+      setKeyInput("");
+      setKeyMsg("Shared key saved.");
+      await loadSharedKey();
+    } catch (e) {
+      setKeyErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setKeyBusy(false);
+    }
+  }
+
+  async function clearSharedKey() {
+    setKeyBusy(true);
+    setKeyErr(null);
+    setKeyMsg(null);
+    try {
+      const res = await fetch("/api/admin/shared-key", { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Failed to clear");
+      setKeyMsg("Shared key cleared.");
+      await loadSharedKey();
+    } catch (e) {
+      setKeyErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setKeyBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {err && (
@@ -145,6 +210,76 @@ export function AdminPanel() {
       </Card>
 
       <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Key className="h-4 w-4" /> Shared DeepSeek Key
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Users without their own DeepSeek key will use this shared key until it expires. Set an expiry date — the key becomes inactive automatically after that.
+          </p>
+
+          {sharedKey && (
+            <div className="flex items-center gap-3 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-3 py-2 text-sm">
+              {sharedKey.active ? (
+                <>
+                  <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 shrink-0">active</Badge>
+                  <span className="font-mono text-xs text-slate-600 dark:text-slate-300">{sharedKey.maskedKey}</span>
+                  <span className="text-slate-500 dark:text-slate-400">· expires {new Date(sharedKey.expiresAt!).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</span>
+                </>
+              ) : sharedKey.expiresAt ? (
+                <>
+                  <Badge className="bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 shrink-0">expired</Badge>
+                  <span className="font-mono text-xs text-slate-600 dark:text-slate-300">{sharedKey.maskedKey}</span>
+                  <span className="text-slate-500 dark:text-slate-400">· expired {new Date(sharedKey.expiresAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</span>
+                </>
+              ) : (
+                <span className="text-slate-400 dark:text-slate-500">No shared key set.</span>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Input
+              type="password"
+              placeholder="sk-…"
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+              className="flex-1 min-w-48 font-mono text-sm"
+            />
+            <input
+              type="date"
+              value={expiryInput}
+              onChange={(e) => setExpiryInput(e.target.value)}
+              min={new Date().toISOString().slice(0, 10)}
+              className="h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-sm text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-signal/70"
+            />
+            <Button onClick={saveSharedKey} disabled={keyBusy}>
+              {keyBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Key className="h-4 w-4" />}
+              Save
+            </Button>
+            {sharedKey?.expiresAt && (
+              <Button variant="outline" onClick={clearSharedKey} disabled={keyBusy}>
+                <Trash2 className="h-4 w-4" /> Clear
+              </Button>
+            )}
+          </div>
+
+          {keyErr && (
+            <div className="rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950 px-3 py-2 text-sm text-rose-800 dark:text-rose-300">
+              {keyErr}
+            </div>
+          )}
+          {keyMsg && (
+            <div className="rounded-md border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300">
+              {keyMsg}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Users</CardTitle>
           <button
@@ -160,6 +295,7 @@ export function AdminPanel() {
               <Loader2 className="h-5 w-5 animate-spin inline" />
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
                 <tr>
@@ -238,6 +374,7 @@ export function AdminPanel() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </CardContent>
       </Card>

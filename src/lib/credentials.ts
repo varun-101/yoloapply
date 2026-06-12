@@ -7,21 +7,28 @@ import { ApiUserError } from "./auth";
 // and the extension API token. Secrets are AES-256-GCM encrypted at rest
 // (src/lib/crypto.ts); the extension token is stored hashed.
 
+async function getActiveSharedKey(): Promise<string | null> {
+  const row = await prisma.sharedDeepseekKey.findUnique({ where: { id: 1 } });
+  if (!row || row.expiresAt <= new Date()) return null;
+  return decryptSecret(row.keyEnc);
+}
+
 export async function getDeepseekKey(userId: string): Promise<string> {
   const cred = await prisma.userCredential.findUnique({ where: { userId } });
-  if (!cred?.deepseekKeyEnc) {
-    throw new ApiUserError(
-      "Add your DeepSeek API key first (Settings → Credentials).",
-      400,
-      "no_llm_key"
-    );
-  }
-  return decryptSecret(cred.deepseekKeyEnc);
+  if (cred?.deepseekKeyEnc) return decryptSecret(cred.deepseekKeyEnc);
+  const shared = await getActiveSharedKey();
+  if (shared) return shared;
+  throw new ApiUserError(
+    "Add your DeepSeek API key first (Settings → Credentials).",
+    400,
+    "no_llm_key"
+  );
 }
 
 export async function getDeepseekKeyOrNull(userId: string): Promise<string | null> {
   const cred = await prisma.userCredential.findUnique({ where: { userId } });
-  return cred?.deepseekKeyEnc ? decryptSecret(cred.deepseekKeyEnc) : null;
+  if (cred?.deepseekKeyEnc) return decryptSecret(cred.deepseekKeyEnc);
+  return getActiveSharedKey();
 }
 
 export interface SmtpConfig {
