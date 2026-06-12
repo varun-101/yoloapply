@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireUser, apiError } from "@/lib/auth";
+import { requireUser, requireScanPermission, apiError } from "@/lib/auth";
 import { startUserScan, getUserScanProgress } from "@/lib/discovery/pipeline";
 import { SCAN_STALE_MS } from "@/lib/discovery/types";
 
@@ -8,10 +8,11 @@ export const maxDuration = 300;
 
 // Kick off a scan for the signed-in user and return immediately — the run is
 // not tied to this response; the frontend polls GET below for progress and
-// the result.
+// the result. A scan refreshes the SHARED catalog, so it's admin-gated
+// (admin or an admin-granted canScan user).
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireUser(req);
+    const user = await requireScanPermission(req);
     const { alreadyRunning, progress } = startUserScan(user.id);
     return NextResponse.json({
       status: alreadyRunning ? "already_running" : "started",
@@ -38,6 +39,7 @@ export async function GET(req: NextRequest) {
         userId: user.id,
         finishedAt: null,
         startedAt: { gt: new Date(Date.now() - SCAN_STALE_MS) },
+        trigger: { not: "score" }, // score-only runs are tracked by /api/discovery/score
       },
       orderBy: { startedAt: "desc" },
     });
@@ -57,7 +59,7 @@ export async function GET(req: NextRequest) {
     }
 
     const lastRun = await prisma.scanRun.findFirst({
-      where: { userId: user.id, finishedAt: { not: null } },
+      where: { userId: user.id, finishedAt: { not: null }, trigger: { not: "score" } },
       orderBy: { startedAt: "desc" },
       select: { id: true, created: true, scored: true, sourceStats: true, error: true, finishedAt: true },
     });

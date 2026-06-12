@@ -19,6 +19,12 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Discovery is admin-driven: only an admin (or a user the admin has granted
+  // canScan) may trigger a catalog scan. The shared JobLead catalog is global;
+  // each user's view of it is their UserLead overlay (status/score/application).
+  isAdmin Boolean @default(false)
+  canScan Boolean @default(false)
+
   profile      UserProfile?
   searchPref   SearchPreference?
   credential   UserCredential?
@@ -26,7 +32,7 @@ model User {
   applications Application[]
   contacts     Contact[]
   emails       Email[]
-  jobLeads     JobLead[]
+  userLeads    UserLead[]
   scanRuns     ScanRun[]
   files        StoredFile[]
 }
@@ -89,6 +95,10 @@ model SearchPreference {
   excludeKeywords  String[]
   locationKeywords String[]
   discoveryEnabled Boolean  @default(false) // off until the user saves locations
+  // Per-user fit-scoring controls (edited from the Discover "Score now" panel,
+  // persisted so scheduled discovery + repeat runs reuse them).
+  scoreMaxPerScan  Int      @default(45) // cap on leads fit-scored per scoring run
+  scoreRecencyDays Int      @default(14) // only score postings newer than this
   updatedAt        DateTime @updatedAt
 }
 
@@ -242,15 +252,15 @@ model ScanRun {
   error       String? // run-level failure or scoring error
   fetchRunId  String?
   fetchRun    FetchRun? @relation(fields: [fetchRunId], references: [id], onDelete: SetNull)
-  leads       JobLead[]
+  leads       UserLead[]
 
   @@index([userId, startedAt])
 }
 
+// Global shared catalog: one row per posting, deduped across all users and
+// sources. The per-user view (status/score/application) lives in UserLead.
 model JobLead {
-  id     String @id @default(cuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id String @id @default(cuid())
 
   source        String // "sheet" | "jobfound" | "greenhouse" | "lever" | "ashby" | "hn"
   externalId    String // hygraph post id; for the sheet, a hash of company+role+date
@@ -267,18 +277,38 @@ model JobLead {
   skills        String?
   postedAt      DateTime?
   contactEmail  String? // hiring contact when the source includes one (HN posts often do)
-  score         Int? // LLM fit score 0-100
-  scoreReason   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  userLeads UserLead[]
+
+  @@unique([source, externalId])
+  @@index([canonicalUrl])
+  @@index([postedAt])
+}
+
+// Per-user overlay on the shared catalog: this user's status, their personalized
+// fit score, and the application they promoted it into. No row = status "new",
+// no score. Rows are created lazily on promote/dismiss and during scoring.
+model UserLead {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  jobLeadId String
+  jobLead   JobLead @relation(fields: [jobLeadId], references: [id], onDelete: Cascade)
+
   status        String    @default("new") // new | promoted | dismissed
   applicationId String? // set on promote
-  scanRunId     String? // the scan that ingested this lead (null for pre-history leads)
+  score         Int? // LLM fit score 0-100 (this user's key/profile)
+  scoreReason   String?
+  scanRunId     String? // the user scan that scored/surfaced it for them
   scanRun       ScanRun?  @relation(fields: [scanRunId], references: [id], onDelete: SetNull)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  @@unique([userId, source, externalId])
-  @@index([userId, canonicalUrl])
-  @@index([userId, status, postedAt])
+  @@unique([userId, jobLeadId])
+  @@index([userId, status])
   @@index([scanRunId])
 }
 

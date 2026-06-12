@@ -1,13 +1,15 @@
 import Link from "next/link";
+import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
-import { requirePageUser } from "@/lib/auth";
+import { ensureUser } from "@/lib/auth";
+import { LandingPage } from "@/components/landing-page";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDate, statusColor, statusBarColor } from "@/lib/utils";
 import { getSetupStatus } from "@/lib/setup";
 import { SetupChecklist } from "@/components/setup-checklist";
-import { ArrowRight, PlusCircle } from "lucide-react";
+import { ArrowRight, PlusCircle, Shield } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +17,12 @@ export const dynamic = "force-dynamic";
 const STATUS_ORDER = ["draft", "personalized", "applied", "replied", "interview", "offer", "rejected", "closed"];
 
 export default async function Dashboard() {
-  const user = await requirePageUser();
+  // "/" is public: signed-out visitors see the landing page, signed-in users
+  // get the dashboard.
+  const { userId: clerkId } = await auth();
+  if (!clerkId) return <LandingPage />;
+  const user = await ensureUser(clerkId);
+
   const [apps, emails, setup] = await Promise.all([
     prisma.application.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 8 }),
     prisma.email.count({ where: { userId: user.id } }),
@@ -61,6 +68,24 @@ export default async function Dashboard() {
           </Link>
         </Button>
       </div>
+
+      {user.isAdmin && (
+        <Link
+          href="/admin"
+          className="mb-6 flex items-center justify-between gap-3 rounded-lg border border-signal/40 bg-signal/10 px-4 py-3 transition-colors hover:bg-signal/20"
+        >
+          <div className="flex items-center gap-3">
+            <Shield className="h-5 w-5 text-signal-deep dark:text-signal shrink-0" />
+            <div>
+              <div className="text-sm font-medium text-amber-900 dark:text-signal">Admin control room</div>
+              <div className="font-mono text-[11px] text-amber-800/80 dark:text-signal/80">
+                run discovery for everyone · grant scan access
+              </div>
+            </div>
+          </div>
+          <ArrowRight className="h-4 w-4 text-signal-deep dark:text-signal" />
+        </Link>
+      )}
 
       <SetupChecklist status={setup} />
 

@@ -8,10 +8,14 @@ import { requireUser, apiError } from "@/lib/auth";
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser(req);
-    const lead = await prisma.jobLead.findFirst({ where: { id: params.id, userId: user.id } });
+    // Shared catalog row (same for everyone); the user's state lives in UserLead.
+    const lead = await prisma.jobLead.findUnique({ where: { id: params.id } });
     if (!lead) return NextResponse.json({ error: "not found" }, { status: 404 });
-    if (lead.status === "promoted" && lead.applicationId) {
-      return NextResponse.json({ applicationId: lead.applicationId, alreadyPromoted: true });
+    const overlay = await prisma.userLead.findUnique({
+      where: { userId_jobLeadId: { userId: user.id, jobLeadId: lead.id } },
+    });
+    if (overlay?.status === "promoted" && overlay.applicationId) {
+      return NextResponse.json({ applicationId: overlay.applicationId, alreadyPromoted: true });
     }
 
     const app = await prisma.application.create({
@@ -41,9 +45,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         detail: `draft (promoted from ${lead.source} discovery)`,
       },
     });
-    await prisma.jobLead.update({
-      where: { id: lead.id },
-      data: { status: "promoted", applicationId: app.id },
+    await prisma.userLead.upsert({
+      where: { userId_jobLeadId: { userId: user.id, jobLeadId: lead.id } },
+      create: { userId: user.id, jobLeadId: lead.id, status: "promoted", applicationId: app.id },
+      update: { status: "promoted", applicationId: app.id },
     });
 
     return NextResponse.json({ applicationId: app.id });

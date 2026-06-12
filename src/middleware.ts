@@ -9,7 +9,8 @@ import { NextRequest, NextResponse } from "next/server";
 //    requests must NEVER hit Clerk's protect(), which would answer a fetch
 //    with an HTML redirect, so the origin branch comes first.
 
-const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);
+// "/" is the public landing page; the dashboard renders there only once signed in.
+const isPublicRoute = createRouteMatcher(["/", "/sign-in(.*)", "/sign-up(.*)"]);
 
 // Extension IDs differ between dev and prod, so we accept any extension
 // origin and rely on the Bearer token for auth.

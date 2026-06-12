@@ -10,12 +10,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (status !== "dismissed" && status !== "new") {
       return NextResponse.json({ error: "status must be 'dismissed' or 'new'" }, { status: 400 });
     }
-    const lead = await prisma.jobLead.findFirst({ where: { id: params.id, userId: user.id } });
+    const lead = await prisma.jobLead.findUnique({ where: { id: params.id } });
     if (!lead) return NextResponse.json({ error: "not found" }, { status: 404 });
-    if (lead.status === "promoted") {
+    const overlay = await prisma.userLead.findUnique({
+      where: { userId_jobLeadId: { userId: user.id, jobLeadId: lead.id } },
+    });
+    if (overlay?.status === "promoted") {
       return NextResponse.json({ error: "lead is already promoted" }, { status: 400 });
     }
-    const updated = await prisma.jobLead.update({ where: { id: lead.id }, data: { status } });
+    // Dismiss/un-dismiss is per-user — it only affects this user's overlay.
+    const updated = await prisma.userLead.upsert({
+      where: { userId_jobLeadId: { userId: user.id, jobLeadId: lead.id } },
+      create: { userId: user.id, jobLeadId: lead.id, status },
+      update: { status },
+    });
     return NextResponse.json(updated);
   } catch (e) {
     return apiError(e);

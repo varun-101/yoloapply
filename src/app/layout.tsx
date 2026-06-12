@@ -8,6 +8,7 @@ import { currentUser } from "@clerk/nextjs/server";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { RailNav, MobileNav } from "@/components/nav";
 import { clerkAppearance } from "@/lib/clerkAppearance";
+import { prisma } from "@/lib/db";
 
 const display = Bricolage_Grotesque({ subsets: ["latin"], variable: "--font-display" });
 const sans = Instrument_Sans({ subsets: ["latin"], variable: "--font-sans" });
@@ -25,6 +26,10 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const user = await currentUser();
   const email = user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses[0]?.emailAddress;
+  const isAdmin = user
+    ? (await prisma.user.findUnique({ where: { clerkId: user.id }, select: { isAdmin: true } }))
+        ?.isAdmin ?? false
+    : false;
   return (
     <ClerkProvider appearance={clerkAppearance}>
     <html lang="en" suppressHydrationWarning className={`${display.variable} ${sans.variable} ${mono.variable}`}>
@@ -33,6 +38,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
         <div className="flex min-h-screen flex-col md:flex-row">
+          {/* App chrome only for signed-in users — signed-out visitors get the
+              full-bleed landing page (and the sign-in/up screens) with no rail.
+              Gated on the server-resolved user so it doesn't pop in. */}
+          {user && (
+          <>
           {/* The rail stays night-dark in both themes — the agent works the
               night shift even when the workspace is in daylight. */}
           <aside className="hidden md:flex w-60 shrink-0 flex-col sticky top-0 h-screen bg-slate-950 border-r border-slate-800 dark:border-slate-900">
@@ -53,7 +63,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               </Link>
             </div>
 
-            <RailNav />
+            <RailNav isAdmin={isAdmin} />
 
             <div className="border-t border-white/10 p-4 space-y-3">
               <div className="flex items-center gap-2">
@@ -104,8 +114,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <ThemeToggle compact />
               </div>
             </div>
-            <MobileNav />
+            <MobileNav isAdmin={isAdmin} />
           </header>
+          </>
+          )}
 
           <main className="flex-1 min-w-0">{children}</main>
         </div>

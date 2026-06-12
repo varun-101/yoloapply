@@ -2,15 +2,25 @@ import { chatJson } from "../llm";
 import { getProfileOrNull, CandidateProfile } from "../profile";
 import { getProjectBank, ProjectBankItem } from "../projectBank";
 import { getDeepseekKeyOrNull } from "../credentials";
+import { ensureSearchPrefs } from "../searchPrefs";
 import { prisma } from "../db";
 
-// LLM fit-scoring for freshly ingested leads, per user with the user's own
-// DeepSeek key. Score is a secondary signal — the queue stays sorted by
-// trust tier + recency; the badge just helps the eye.
+// LLM fit-scoring against the shared catalog, per user with the user's own
+// DeepSeek key and profile. Each scored posting lands in that user's UserLead
+// overlay (so the same catalog row carries a different score per viewer). Score
+// is a secondary signal — the queue stays sorted by trust tier + recency.
 
 const BATCH_SIZE = 10;
-const MAX_PER_RUN = 45;
-const MAX_AGE_DAYS = 14;
+// Hard defaults; the user's SearchPreference (scoreMaxPerScan/scoreRecencyDays)
+// overrides these, and the "Score now" panel can override per run.
+const DEFAULT_MAX_PER_RUN = 45;
+const DEFAULT_MAX_AGE_DAYS = 14;
+
+export interface ScoreOptions {
+  scanRunId?: string; // link scored overlays to this run
+  maxPerScan?: number;
+  recencyDays?: number;
+}
 
 function profileSummary(profile: CandidateProfile, projects: ProjectBankItem[]): string {
   const projectLines = projects.map((p) => `- ${p.title}: ${p.oneLiner}`).join("\n");
@@ -62,6 +72,8 @@ interface LeadForScoring {
 }
 
 async function scoreBatch(
+  userId: string,
+  scanRunId: string | undefined,
   apiKey: string,
   system: string,
   summary: string,
@@ -94,38 +106,52 @@ async function scoreBatch(
   const valid = new Set(leads.map((l) => l.id));
   for (const s of out.scores ?? []) {
     if (!valid.has(s.id) || typeof s.score !== "number") continue;
-    await prisma.jobLead.update({
-      where: { id: s.id },
-      data: {
-        score: Math.max(0, Math.min(100, Math.round(s.score))),
-        scoreReason: String(s.reason ?? "").slice(0, 200),
-      },
+    const score = Math.max(0, Math.min(100, Math.round(s.score)));
+    const scoreReason = String(s.reason ?? "").slice(0, 200);
+    // The score is this user's overlay on the shared catalog row.
+    await prisma.userLead.upsert({
+      where: { userId_jobLeadId: { userId, jobLeadId: s.id } },
+      create: { userId, jobLeadId: s.id, score, scoreReason, scanRunId },
+      update: { score, scoreReason, scanRunId },
     });
     updated++;
   }
   return updated;
 }
 
-// Scores the user's unscored new leads, freshest first, capped per run to
-// bound cost. Skips gracefully when the user has no key or no profile.
-export async function scoreNewLeads(userId: string): Promise<{ scored: number; error?: string }> {
+// Scores the catalog postings this user hasn't scored yet, freshest first,
+// within the recency window and capped (both user-configurable). Skips
+// gracefully when the user has no key or no profile.
+export async function scoreNewLeads(
+  userId: string,
+  opts: ScoreOptions = {},
+  onProgress?: (scored: number) => void
+): Promise<{ scored: number; total: number; error?: string }> {
   const apiKey = await getDeepseekKeyOrNull(userId);
   if (!apiKey) {
-    return { scored: 0, error: "no DeepSeek key configured — skipped scoring" };
+    return { scored: 0, total: 0, error: "no DeepSeek key configured — skipped scoring" };
   }
   const profile = await getProfileOrNull(userId);
   if (!profile) {
-    return { scored: 0, error: "no profile configured — skipped scoring" };
+    return { scored: 0, total: 0, error: "no profile configured — skipped scoring" };
   }
   const projects = await getProjectBank(userId);
 
-  const since = new Date(Date.now() - MAX_AGE_DAYS * 86400 * 1000);
+  const prefs = await ensureSearchPrefs(userId);
+  const maxPerScan = Math.max(1, opts.maxPerScan ?? prefs.scoreMaxPerScan ?? DEFAULT_MAX_PER_RUN);
+  const recencyDays = Math.max(1, opts.recencyDays ?? prefs.scoreRecencyDays ?? DEFAULT_MAX_AGE_DAYS);
+
+  const since = new Date(Date.now() - recencyDays * 86400 * 1000);
+  // Catalog rows this user hasn't scored or acted on yet, within the window.
   const leads = await prisma.jobLead.findMany({
     where: {
-      userId,
-      status: "new",
-      score: null,
       OR: [{ postedAt: { gte: since } }, { postedAt: null, createdAt: { gte: since } }],
+      userLeads: {
+        none: {
+          userId,
+          OR: [{ score: { not: null } }, { status: { in: ["promoted", "dismissed"] } }],
+        },
+      },
     },
     select: {
       id: true,
@@ -138,9 +164,9 @@ export async function scoreNewLeads(userId: string): Promise<{ scored: number; e
       jdText: true,
     },
     orderBy: [{ postedAt: "desc" }],
-    take: MAX_PER_RUN,
+    take: maxPerScan,
   });
-  if (leads.length === 0) return { scored: 0 };
+  if (leads.length === 0) return { scored: 0, total: 0 };
 
   const system = systemPrompt(profile);
   const summary = profileSummary(profile, projects);
@@ -149,12 +175,20 @@ export async function scoreNewLeads(userId: string): Promise<{ scored: number; e
   let error: string | undefined;
   for (let i = 0; i < leads.length; i += BATCH_SIZE) {
     try {
-      scored += await scoreBatch(apiKey, system, summary, leads.slice(i, i + BATCH_SIZE));
+      scored += await scoreBatch(
+        userId,
+        opts.scanRunId,
+        apiKey,
+        system,
+        summary,
+        leads.slice(i, i + BATCH_SIZE)
+      );
+      onProgress?.(scored);
     } catch (e: unknown) {
       // One malformed LLM response shouldn't sink the other batches — those
-      // leads stay unscored and get retried on the next scan.
+      // leads stay unscored and get retried on the next run.
       error = e instanceof Error ? e.message : String(e);
     }
   }
-  return { scored, error };
+  return { scored, total: leads.length, error };
 }

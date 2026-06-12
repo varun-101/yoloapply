@@ -13,7 +13,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const user = await requireUser(req);
     const apiKey = await getDeepseekKey(user.id);
-    const lead = await prisma.jobLead.findFirst({ where: { id: params.id, userId: user.id } });
+    // Enriching the JD updates the SHARED catalog row — it benefits everyone.
+    const lead = await prisma.jobLead.findUnique({ where: { id: params.id } });
     if (!lead) return NextResponse.json({ error: "not found" }, { status: 404 });
     if (!lead.url) {
       return NextResponse.json({ error: "this lead has no posting URL to fetch" }, { status: 400 });

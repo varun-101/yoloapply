@@ -4,19 +4,14 @@ import { fetchAtsLeads } from "./ats";
 import { fetchHnLeads } from "./hn";
 import { fetchJobfoundLeads } from "./jobfound";
 import { fetchSheetLeads } from "./sheet";
-import { scoreNewLeads } from "./score";
-import {
-  ensureSearchPrefs,
-  titleMatches,
-  locationMatches,
-  type SearchPrefs,
-} from "../searchPrefs";
+import { scoreNewLeads, type ScoreOptions } from "./score";
+import { ensureSearchPrefs, type SearchPrefs } from "../searchPrefs";
 import type { FetchResult, RawLead } from "./types";
 
-// Multi-user discovery: the four sources are fetched ONCE per tick (a global
-// FetchRun — sources return full current snapshots), then fanned out per user:
-// each user's keyword/location filters, dedupe and scoring run over the shared
-// results and land in their own ScanRun.
+// Multi-user discovery: the four sources are fetched ONCE per tick and ingested
+// into the GLOBAL JobLead catalog (a shared list, same for everyone). Each user's
+// scan then fit-scores the new catalog postings with their own key/profile into
+// their UserLead overlay (recorded as their ScanRun).
 
 // Params that only track where a click came from. Everything else (ATS tokens,
 // posting ids) must survive canonicalization or Greenhouse-style embed URLs
@@ -51,14 +46,6 @@ export function canonicalizeUrl(raw: string | undefined): string | undefined {
   }
 }
 
-function normKey(company: string, role: string): string {
-  return `${company}::${role}`.toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-// Tier-1 sources (sheet, jobfound) are curated for freshers — per-user filters
-// only apply to the firehose sources.
-const FILTERED_SOURCES = new Set(["greenhouse", "lever", "ashby", "hn"]);
-
 export interface SourceStats {
   source: string;
   fetched: number; // for filtered sources: postings passing THIS user's filters
@@ -91,6 +78,10 @@ interface GlobalFetchOutput {
   fetchRunId: string;
   startedAt: Date;
   results: FetchResult[];
+  // Catalog ingest is global (once per fetch); these stats are shared by every
+  // user's ScanRun for this fetch.
+  sourceStats: SourceStats[];
+  created: number; // new catalog postings added by this fetch
 }
 
 interface GlobalFetchState {
@@ -107,6 +98,8 @@ type DiscoveryGlobal = {
   __globalFetch?: GlobalFetchState | null;
   __userScans?: Map<string, Promise<UserScanResult>>;
   __userScanProgress?: Map<string, DiscoveryProgress>;
+  __userScoring?: Map<string, Promise<ScoringResult>>;
+  __userScoringProgress?: Map<string, ScoringProgress>;
 };
 const g = globalThis as unknown as DiscoveryGlobal;
 
@@ -165,29 +158,19 @@ async function doGlobalFetch(
   });
   const participantIds = [...new Set([...enabled.map((u) => u.id), ...extraUserIds])];
 
+  // The union of participants' prefs drives the firehose prefilter — the shared
+  // catalog keeps anything at least one participant cares about.
   const prefsList: SearchPrefs[] = [];
   for (const id of participantIds) prefsList.push(await ensureSearchPrefs(id));
 
-  // Leads every participant already has: those skip the per-job Greenhouse JD
-  // request and HN LLM re-extraction (a lead missing for even one user still
-  // needs its detail so that user's fan-out can ingest it complete).
-  const seenByAll = new Set<string>();
-  if (participantIds.length > 0) {
-    const rows = await prisma.jobLead.findMany({
-      where: { userId: { in: participantIds } },
-      select: { userId: true, source: true, externalId: true },
-    });
-    const holders = new Map<string, Set<string>>();
-    for (const r of rows) {
-      const key = `${r.source}::${r.externalId}`;
-      let set = holders.get(key);
-      if (!set) holders.set(key, (set = new Set()));
-      set.add(r.userId);
-    }
-    for (const [key, set] of holders) {
-      if (set.size >= participantIds.length) seenByAll.add(key);
-    }
-  }
+  // Postings the shared catalog already holds WITH a job description: those skip
+  // the per-job Greenhouse JD request and HN LLM re-extraction. A catalog row
+  // missing its JD is left fetchable so it can be enriched.
+  const haveJd = await prisma.jobLead.findMany({
+    where: { jdText: { not: null } },
+    select: { source: true, externalId: true },
+  });
+  const seenByAll = new Set(haveJd.map((l) => `${l.source}::${l.externalId}`));
 
   const fetchRun = await prisma.fetchRun.create({ data: { trigger } });
   try {
@@ -203,16 +186,15 @@ async function doGlobalFetch(
       tick(fetchHnLeads(seenByAll)),
     ]);
     const results = [sheet, jobfound, ...ats, hn];
+
+    // Ingest into the shared catalog ONCE (dedupe across sources + history).
+    const { stats, created } = await ingestCatalog(results);
+
     await prisma.fetchRun.update({
       where: { id: fetchRun.id },
-      data: {
-        finishedAt: new Date(),
-        sourceStats: JSON.stringify(
-          results.map((r) => ({ source: r.source, fetched: r.leads.length, error: r.error }))
-        ),
-      },
+      data: { finishedAt: new Date(), sourceStats: JSON.stringify(stats) },
     });
-    return { fetchRunId: fetchRun.id, startedAt: fetchRun.startedAt, results };
+    return { fetchRunId: fetchRun.id, startedAt: fetchRun.startedAt, results, sourceStats: stats, created };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     await prisma.fetchRun
@@ -220,6 +202,120 @@ async function doGlobalFetch(
       .catch(() => {});
     throw e;
   }
+}
+
+// ── Global catalog ingest ─────────────────────────────────────────────────────
+
+type CatalogRow = {
+  id: string;
+  source: string;
+  externalId: string;
+  canonicalUrl: string | null;
+  sources: string | null;
+  jdText: string | null;
+};
+
+// Upserts fetched postings into the global JobLead catalog: dedupe by
+// (source, externalId), cross-source-merge by canonical URL, enrich a JD-less
+// row when a later source carries the description. Runs once per fetch.
+async function ingestCatalog(
+  results: FetchResult[]
+): Promise<{ stats: SourceStats[]; created: number }> {
+  const existing = await prisma.jobLead.findMany({
+    select: { id: true, source: true, externalId: true, canonicalUrl: true, sources: true, jdText: true },
+  });
+  const bySourceId = new Map<string, CatalogRow>();
+  const byCanonical = new Map<string, CatalogRow>();
+  for (const l of existing) {
+    bySourceId.set(`${l.source}::${l.externalId}`, l);
+    if (l.canonicalUrl) byCanonical.set(l.canonicalUrl, l);
+  }
+
+  const stats: SourceStats[] = [];
+  let createdTotal = 0;
+
+  for (const result of results) {
+    const s: SourceStats = {
+      source: result.source,
+      fetched: result.leads.length,
+      created: 0,
+      duplicates: 0,
+      alreadyApplied: 0,
+      error: result.error,
+    };
+
+    for (const lead of result.leads) {
+      const sourceKey = `${lead.source}::${lead.externalId}`;
+      const existingRow = bySourceId.get(sourceKey);
+      if (existingRow) {
+        // Same posting already in the catalog — enrich a missing JD if we now have one.
+        if (!existingRow.jdText && lead.jdText) {
+          await prisma.jobLead.update({ where: { id: existingRow.id }, data: { jdText: lead.jdText } });
+          existingRow.jdText = lead.jdText;
+        }
+        s.duplicates++;
+        continue;
+      }
+
+      const canonical = canonicalizeUrl(lead.url);
+      const cross = canonical ? byCanonical.get(canonical) : undefined;
+      if (cross) {
+        // Same posting found via another source — record the extra source label.
+        const sources = cross.sources ?? cross.source;
+        if (!sources.split(",").includes(lead.source)) {
+          const merged = `${sources},${lead.source}`;
+          await prisma.jobLead.update({
+            where: { id: cross.id },
+            data: { sources: merged, jdText: cross.jdText ?? lead.jdText ?? null },
+          });
+          cross.sources = merged;
+          if (!cross.jdText && lead.jdText) cross.jdText = lead.jdText;
+        }
+        bySourceId.set(sourceKey, cross);
+        s.duplicates++;
+        continue;
+      }
+
+      let row;
+      try {
+        row = await prisma.jobLead.create({
+          data: {
+            source: lead.source,
+            externalId: lead.externalId,
+            company: lead.company,
+            role: lead.role,
+            location: lead.location ?? null,
+            url: lead.url ?? null,
+            canonicalUrl: canonical ?? null,
+            jdText: lead.jdText ?? null,
+            salary: lead.salary ?? null,
+            jobType: lead.jobType ?? null,
+            experience: lead.experience ?? null,
+            skills: lead.skills ?? null,
+            contactEmail: lead.contactEmail ?? null,
+            postedAt: lead.postedAt ?? null,
+          },
+          select: { id: true, source: true, externalId: true, canonicalUrl: true, sources: true, jdText: true },
+        });
+      } catch (e: unknown) {
+        // Another fetch in flight can insert the same posting between our snapshot
+        // and this create — that's a duplicate, not a failure.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          s.duplicates++;
+          continue;
+        }
+        throw e;
+      }
+      bySourceId.set(sourceKey, row);
+      if (canonical) byCanonical.set(canonical, row);
+      s.created++;
+      createdTotal++;
+    }
+
+    stats.push(s);
+  }
+
+  return { stats, created: createdTotal };
 }
 
 // ── Per-user fan-out ────────────────────────────────────────────────────────
@@ -274,6 +370,100 @@ export function startUserScan(userId: string): {
   return { alreadyRunning, progress: getUserScanProgress(userId)! };
 }
 
+// ── Standalone scoring ("Score now") ──────────────────────────────────────────
+
+// Fit-scoring the shared catalog is decoupled from scanning: any user (not just
+// scanners) can score the catalog with their own key on demand. It runs as its
+// own long-running task — per-user lock + progress + a ScanRun row — so it
+// survives a tab close and rejects duplicate kicks (the CLAUDE.md pattern).
+
+export interface ScoringProgress {
+  scanRunId: string | null;
+  startedAt: string;
+  phase: string; // "scoring" | "done"
+  scored: number;
+}
+
+export interface ScoringResult {
+  scanRunId: string;
+  scored: number;
+  total: number;
+  error?: string;
+}
+
+function userScoring(): Map<string, Promise<ScoringResult>> {
+  return (g.__userScoring ??= new Map());
+}
+function scoringProgressMap(): Map<string, ScoringProgress> {
+  return (g.__userScoringProgress ??= new Map());
+}
+
+export function getUserScoringProgress(userId: string): ScoringProgress | null {
+  const p = scoringProgressMap().get(userId);
+  return p ? { ...p } : null;
+}
+
+export function runUserScoring(
+  userId: string,
+  opts: Pick<ScoreOptions, "maxPerScan" | "recencyDays"> = {}
+): Promise<ScoringResult> {
+  const tasks = userScoring();
+  const existing = tasks.get(userId);
+  if (existing) return existing;
+
+  scoringProgressMap().set(userId, {
+    scanRunId: null,
+    startedAt: new Date().toISOString(),
+    phase: "scoring",
+    scored: 0,
+  });
+  const patch = (n: number) => {
+    const p = scoringProgressMap().get(userId);
+    if (p) p.scored = n;
+  };
+  const p = (async (): Promise<ScoringResult> => {
+    // trigger "score" marks a score-only run (no catalog fetch) so the scan
+    // status/history endpoints don't mistake it for a scan.
+    const scanRun = await prisma.scanRun.create({ data: { userId, trigger: "score" } });
+    const sp = scoringProgressMap().get(userId);
+    if (sp) sp.scanRunId = scanRun.id;
+    try {
+      const r = await scoreNewLeads(userId, { ...opts, scanRunId: scanRun.id }, patch);
+      await prisma.scanRun.update({
+        where: { id: scanRun.id },
+        data: { finishedAt: new Date(), created: 0, scored: r.scored, error: r.error ?? null },
+      });
+      return { scanRunId: scanRun.id, scored: r.scored, total: r.total, error: r.error };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await prisma.scanRun
+        .update({ where: { id: scanRun.id }, data: { finishedAt: new Date(), error: msg } })
+        .catch(() => {});
+      throw e;
+    }
+  })().finally(() => {
+    tasks.delete(userId);
+    scoringProgressMap().delete(userId);
+  });
+  tasks.set(userId, p);
+  return p;
+}
+
+// Fire-and-forget kick-off for POST /api/discovery/score.
+export function startUserScoring(
+  userId: string,
+  opts: Pick<ScoreOptions, "maxPerScan" | "recencyDays"> = {}
+): { alreadyRunning: boolean; progress: ScoringProgress } {
+  const alreadyRunning = userScoring().has(userId);
+  if (!alreadyRunning) {
+    runUserScoring(userId, opts).catch(() => {});
+  }
+  return { alreadyRunning, progress: getUserScoringProgress(userId)! };
+}
+
+// The shared catalog is already refreshed by the global fetch; a user's fan-out
+// just records their ScanRun and fit-scores the new catalog postings with their
+// own key/profile (their saved scoring controls).
 async function fanOutUser(
   userId: string,
   fetched: GlobalFetchOutput,
@@ -282,20 +472,29 @@ async function fanOutUser(
   const scanRun = await prisma.scanRun.create({
     data: { userId, trigger, fetchRunId: fetched.fetchRunId },
   });
-  patchProgress(userId, { scanRunId: scanRun.id });
+  patchProgress(userId, { scanRunId: scanRun.id, phase: "scoring new leads" });
   try {
-    const result = await ingestAndScore(userId, scanRun.id, fetched);
+    const scoring = await scoreNewLeads(userId, { scanRunId: scanRun.id }, (n) =>
+      patchProgress(userId, { created: n })
+    );
     await prisma.scanRun.update({
       where: { id: scanRun.id },
       data: {
         finishedAt: new Date(),
-        created: result.created,
-        scored: result.scored,
-        sourceStats: JSON.stringify(result.sources),
-        error: result.scoreError ?? null,
+        created: fetched.created,
+        scored: scoring.scored,
+        sourceStats: JSON.stringify(fetched.sourceStats),
+        error: scoring.error ?? null,
       },
     });
-    return result;
+    return {
+      scanRunId: scanRun.id,
+      fetchRunId: fetched.fetchRunId,
+      sources: fetched.sourceStats,
+      created: fetched.created,
+      scored: scoring.scored,
+      scoreError: scoring.error,
+    };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     await prisma.scanRun
@@ -305,152 +504,6 @@ async function fanOutUser(
   }
 }
 
-async function ingestAndScore(
-  userId: string,
-  scanRunId: string,
-  fetched: GlobalFetchOutput
-): Promise<UserScanResult> {
-  const [prefs, existingLeads, applications] = await Promise.all([
-    ensureSearchPrefs(userId),
-    prisma.jobLead.findMany({
-      where: { userId },
-      select: { id: true, source: true, externalId: true, canonicalUrl: true, sources: true },
-    }),
-    prisma.application.findMany({
-      where: { userId },
-      select: { company: true, role: true, applyUrl: true },
-    }),
-  ]);
-
-  const seenSourceIds = new Set(existingLeads.map((l) => `${l.source}::${l.externalId}`));
-  const byCanonical = new Map<string, { id: string; sources: string | null; source: string }>();
-  for (const l of existingLeads) {
-    if (l.canonicalUrl) byCanonical.set(l.canonicalUrl, l);
-  }
-  const appliedUrls = new Set(
-    applications.map((a) => canonicalizeUrl(a.applyUrl ?? undefined)).filter(Boolean)
-  );
-  const appliedKeys = new Set(applications.map((a) => normKey(a.company, a.role)));
-
-  const stats: SourceStats[] = [];
-  let createdTotal = 0;
-
-  for (const result of fetched.results) {
-    // Firehose sources get this user's keyword/location filters; the curated
-    // tier-1 sources pass through unfiltered (same rule as the old config.ts).
-    const leads = FILTERED_SOURCES.has(result.source)
-      ? result.leads.filter(
-          (l) => titleMatches(prefs, l.role) && locationMatches(prefs, l.location)
-        )
-      : result.leads;
-
-    const s: SourceStats = {
-      source: result.source,
-      fetched: leads.length,
-      created: 0,
-      duplicates: 0,
-      alreadyApplied: 0,
-      error: result.error,
-    };
-
-    for (const lead of leads) {
-      const sourceKey = `${lead.source}::${lead.externalId}`;
-      if (seenSourceIds.has(sourceKey)) {
-        s.duplicates++;
-        continue;
-      }
-      seenSourceIds.add(sourceKey);
-
-      const canonical = canonicalizeUrl(lead.url);
-
-      // Same posting already ingested from another source — record the extra
-      // source on the existing lead instead of duplicating it.
-      const cross = canonical ? byCanonical.get(canonical) : undefined;
-      if (cross) {
-        const sources = cross.sources ?? cross.source;
-        if (!sources.split(",").includes(lead.source)) {
-          await prisma.jobLead.update({
-            where: { id: cross.id },
-            data: { sources: `${sources},${lead.source}` },
-          });
-          cross.sources = `${sources},${lead.source}`;
-        }
-        s.duplicates++;
-        continue;
-      }
-
-      // Already-applied guard: skip postings matching an existing application.
-      if ((canonical && appliedUrls.has(canonical)) || appliedKeys.has(normKey(lead.company, lead.role))) {
-        s.alreadyApplied++;
-        continue;
-      }
-
-      // Greenhouse skips the per-job JD request when another user already has
-      // the posting — copy their JD text instead of leaving the lead bare.
-      let jdText = lead.jdText;
-      if (!jdText && lead.source === "greenhouse") {
-        const sibling = await prisma.jobLead.findFirst({
-          where: { source: lead.source, externalId: lead.externalId, jdText: { not: null } },
-          select: { jdText: true },
-        });
-        jdText = sibling?.jdText ?? undefined;
-      }
-
-      let created;
-      try {
-        created = await prisma.jobLead.create({
-          data: {
-            userId,
-            source: lead.source,
-            externalId: lead.externalId,
-            company: lead.company,
-            role: lead.role,
-            location: lead.location ?? null,
-            url: lead.url ?? null,
-            canonicalUrl: canonical ?? null,
-            jdText: jdText ?? null,
-            salary: lead.salary ?? null,
-            jobType: lead.jobType ?? null,
-            experience: lead.experience ?? null,
-            skills: lead.skills ?? null,
-            contactEmail: lead.contactEmail ?? null,
-            postedAt: lead.postedAt ?? null,
-            scanRunId,
-          },
-        });
-      } catch (e: unknown) {
-        // A scan in another process can insert the same lead between our
-        // snapshot and this create — that's just a duplicate, not a failure.
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-          s.duplicates++;
-          continue;
-        }
-        throw e;
-      }
-      if (canonical) {
-        byCanonical.set(canonical, { id: created.id, sources: null, source: lead.source });
-      }
-      s.created++;
-      createdTotal++;
-      patchProgress(userId, { created: createdTotal });
-    }
-
-    stats.push(s);
-  }
-
-  patchProgress(userId, { phase: "scoring new leads" });
-  const scoring = await scoreNewLeads(userId);
-
-  return {
-    scanRunId,
-    fetchRunId: fetched.fetchRunId,
-    sources: stats,
-    created: createdTotal,
-    scored: scoring.scored,
-    scoreError: scoring.error,
-  };
-}
-
 // ── Full tick (cron / script) ───────────────────────────────────────────────
 
 export interface FullTickResult {
@@ -458,16 +511,24 @@ export interface FullTickResult {
   users: { userId: string; email: string; result?: UserScanResult; error?: string }[];
 }
 
-// One scheduled tick: global fetch, then sequential fan-out over every user
-// with discovery enabled. One user's failure never blocks the others.
-export async function runFullTick(trigger: "cron" | "script" = "cron"): Promise<FullTickResult> {
+// One scheduled tick (or an admin "scan everybody"): refresh the shared catalog
+// once, then sequential fan-out scoring over every discovery-enabled user. One
+// user's failure never blocks the others. `extraParticipants` widens the fetch's
+// firehose prefilter and forces a catalog refresh even with no enabled users —
+// used by the admin scan so the catalog updates regardless.
+export async function runFullTick(
+  trigger: "cron" | "script" = "cron",
+  extraParticipants: string[] = []
+): Promise<FullTickResult> {
   const users = await prisma.user.findMany({
     where: { searchPref: { is: { discoveryEnabled: true } } },
     select: { id: true, email: true },
   });
-  if (users.length === 0) return { fetchRunId: null, users: [] };
+  if (users.length === 0 && extraParticipants.length === 0) {
+    return { fetchRunId: null, users: [] };
+  }
 
-  const fetched = await runGlobalFetch(trigger);
+  const fetched = await runGlobalFetch(trigger, extraParticipants);
   const out: FullTickResult = { fetchRunId: fetched.fetchRunId, users: [] };
   for (const u of users) {
     try {

@@ -9,6 +9,7 @@ import {
   PlusCircle,
   Radar,
   Settings,
+  Shield,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -20,9 +21,14 @@ interface Item {
   label: string;
 }
 
+interface Section {
+  label: string;
+  items: Item[];
+}
+
 // Sections mirror how the work actually divides: the agent operates, you
 // manage the pipeline, outreach is its own track, assets back it all.
-const SECTIONS: { label: string; items: Item[] }[] = [
+const SECTIONS: Section[] = [
   {
     label: "Operate",
     items: [
@@ -53,7 +59,17 @@ const SECTIONS: { label: string; items: Item[] }[] = [
   },
 ];
 
-const ALL_ITEMS = SECTIONS.flatMap((s) => s.items);
+// The Admin section is only shown to admins (the shared catalog is theirs to run).
+const ADMIN_SECTION: Section = {
+  label: "Admin",
+  items: [{ href: "/admin", icon: Shield, label: "Admin panel" }],
+};
+
+function sectionsFor(isAdmin: boolean): Section[] {
+  return isAdmin ? [...SECTIONS, ADMIN_SECTION] : SECTIONS;
+}
+
+const ALL_ITEMS = [...SECTIONS, ADMIN_SECTION].flatMap((s) => s.items);
 
 // Longest matching href wins, so /applications/new highlights "New
 // application" rather than "Applications".
@@ -66,12 +82,12 @@ function activeHref(pathname: string): string | null {
   return best;
 }
 
-export function RailNav() {
+export function RailNav({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
   const active = activeHref(pathname);
   return (
     <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
-      {SECTIONS.map((section) => (
+      {sectionsFor(isAdmin).map((section) => (
         <div key={section.label}>
           <div className="px-3 pb-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500">
             {section.label}
@@ -108,12 +124,13 @@ export function RailNav() {
 }
 
 // Compact horizontal strip for small screens — same destinations, no sections.
-export function MobileNav() {
+export function MobileNav({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
   const active = activeHref(pathname);
+  const items = sectionsFor(isAdmin).flatMap((s) => s.items);
   return (
     <nav className="flex items-center gap-1 overflow-x-auto px-2 py-1.5">
-      {ALL_ITEMS.map((item) => {
+      {items.map((item) => {
         const isActive = item.href === active;
         const Icon = item.icon;
         return (

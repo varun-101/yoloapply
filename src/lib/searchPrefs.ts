@@ -10,6 +10,8 @@ export interface SearchPrefs {
   excludeKeywords: string[];
   locationKeywords: string[];
   discoveryEnabled: boolean;
+  scoreMaxPerScan: number;
+  scoreRecencyDays: number;
 }
 
 // Generic engineering defaults prefilled for new users (they tune them in
@@ -64,6 +66,8 @@ export async function getSearchPrefs(userId: string): Promise<SearchPrefs | null
     excludeKeywords: row.excludeKeywords,
     locationKeywords: row.locationKeywords,
     discoveryEnabled: row.discoveryEnabled,
+    scoreMaxPerScan: row.scoreMaxPerScan,
+    scoreRecencyDays: row.scoreRecencyDays,
   };
 }
 
@@ -85,6 +89,8 @@ export async function ensureSearchPrefs(userId: string): Promise<SearchPrefs> {
     excludeKeywords: row.excludeKeywords,
     locationKeywords: row.locationKeywords,
     discoveryEnabled: row.discoveryEnabled,
+    scoreMaxPerScan: row.scoreMaxPerScan,
+    scoreRecencyDays: row.scoreRecencyDays,
   };
 }
 

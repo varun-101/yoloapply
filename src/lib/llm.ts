@@ -54,7 +54,21 @@ export function parseJsonFromText<T = unknown>(text: string): T {
   if (start === -1 || end === -1) {
     throw new Error("No JSON object found in model output:\n" + text.slice(0, 400));
   }
-  return JSON.parse(t.slice(start, end + 1)) as T;
+  const json = t.slice(start, end + 1);
+  try {
+    return JSON.parse(json) as T;
+  } catch (e) {
+    // Cheap repair for the common LLM tell — trailing commas before } or ].
+    const repaired = json.replace(/,(\s*[}\]])/g, "$1");
+    if (repaired !== json) {
+      try {
+        return JSON.parse(repaired) as T;
+      } catch {
+        // fall through to the original error
+      }
+    }
+    throw e;
+  }
 }
 
 export interface ChatJsonOptions {
@@ -78,6 +92,7 @@ export async function chatJson<T = unknown>(opts: ChatJsonOptions): Promise<T> {
   const maxTokens = opts.maxTokens ?? 8192;
   const attempts = 3;
   let lastInfo = "";
+  let lastParseErr: Error | null = null;
 
   for (let i = 0; i < attempts; i++) {
     const resp = await llm(opts.apiKey).chat.completions.create({
@@ -97,7 +112,15 @@ export async function chatJson<T = unknown>(opts: ChatJsonOptions): Promise<T> {
     const content = msg?.content ?? "";
 
     if (content) {
-      return parseJsonFromText<T>(content);
+      try {
+        return parseJsonFromText<T>(content);
+      } catch (e: unknown) {
+        // Malformed JSON (e.g. an unescaped quote in a field) — retry; the model
+        // usually returns clean JSON on another pass.
+        lastParseErr = e instanceof Error ? e : new Error(String(e));
+        lastInfo = `content parse failed: ${lastParseErr.message}, attempt ${i + 1}/${attempts}`;
+        continue;
+      }
     }
 
     // Salvage: the reasoner sometimes leaves `content` empty and puts the JSON
@@ -116,6 +139,11 @@ export async function chatJson<T = unknown>(opts: ChatJsonOptions): Promise<T> {
     lastInfo = `finish_reason=${finish}, completion_tokens=${used}, attempt ${i + 1}/${attempts}`;
   }
 
+  if (lastParseErr) {
+    throw new Error(
+      `LLM returned unparseable JSON after ${attempts} attempts (${lastInfo}).`
+    );
+  }
   throw new Error(
     `LLM returned empty content after ${attempts} attempts (${lastInfo}). ` +
       "This is a DeepSeek reasoning-model quirk; retrying usually clears it."

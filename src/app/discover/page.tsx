@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SOURCE_LABEL } from "@/lib/discovery/types";
-import { CheckCircle2, ExternalLink, FileSearch, History, Loader2, Mail, RadarIcon, Sparkles, X } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileSearch, Gauge, History, Loader2, Mail, RadarIcon, SlidersHorizontal, Sparkles, X } from "lucide-react";
 
 interface Lead {
   id: string;
@@ -114,6 +114,24 @@ interface LastScan {
   created: number;
 }
 
+interface Me {
+  isAdmin: boolean;
+  canScan: boolean;
+}
+
+interface ScoreProgress {
+  scanRunId: string | null;
+  startedAt: string;
+  phase: string;
+  scored: number;
+}
+
+interface ScoreStatus {
+  status: "running" | "idle";
+  progress?: ScoreProgress;
+  lastRun?: { id: string; scored: number; error: string | null } | null;
+}
+
 function isFresh(iso: string | null): boolean {
   return !!iso && Date.now() - new Date(iso).getTime() < 24 * 3_600_000;
 }
@@ -130,7 +148,11 @@ export default function DiscoverPage() {
   const [status, setStatus] = useState("new");
   const [source, setSource] = useState("");
   const [jobType, setJobType] = useState("");
-  const [days, setDays] = useState("");
+  // Default to the last 3 days — the full catalog is thousands of rows; the user
+  // can widen the window from the date filter below.
+  const [days, setDays] = useState("3");
+  // Separate window on when a scan discovered the posting (catalog createdAt).
+  const [scannedDays, setScannedDays] = useState("");
   const [sort, setSort] = useState("trust");
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
@@ -141,6 +163,17 @@ export default function DiscoverPage() {
   const [busyLead, setBusyLead] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [lastScan, setLastScan] = useState<LastScan | null>(null);
+
+  const [me, setMe] = useState<Me | null>(null);
+  const canScan = !!(me?.isAdmin || me?.canScan);
+
+  // "Score now" — user-driven fit-scoring of the shared catalog with their key.
+  const [scoring, setScoring] = useState(false);
+  const [scoreProgress, setScoreProgress] = useState<ScoreProgress | null>(null);
+  const [scoreMsg, setScoreMsg] = useState<string | null>(null);
+  const [showScoreOpts, setShowScoreOpts] = useState(false);
+  const [maxPerScan, setMaxPerScan] = useState(45);
+  const [recencyDays, setRecencyDays] = useState(14);
 
   const loadLastScan = useCallback(async () => {
     try {
@@ -156,15 +189,31 @@ export default function DiscoverPage() {
     loadLastScan();
   }, [loadLastScan]);
 
+  // Who am I (gates the Scan button) + my saved scoring controls.
+  useEffect(() => {
+    fetch("/api/me")
+      .then((r) => r.json())
+      .then((d: Me) => setMe(d))
+      .catch(() => {});
+    fetch("/api/settings/search")
+      .then((r) => r.json())
+      .then((d: { prefs?: { scoreMaxPerScan?: number; scoreRecencyDays?: number } }) => {
+        if (d.prefs?.scoreMaxPerScan) setMaxPerScan(d.prefs.scoreMaxPerScan);
+        if (d.prefs?.scoreRecencyDays) setRecencyDays(d.prefs.scoreRecencyDays);
+      })
+      .catch(() => {});
+  }, []);
+
   const load = useCallback(async () => {
     const qs = new URLSearchParams({ status });
     if (source) qs.set("source", source);
     if (jobType) qs.set("jobType", jobType);
     if (days) qs.set("days", days);
+    if (scannedDays) qs.set("scannedDays", scannedDays);
     if (sort !== "trust") qs.set("sort", sort);
     const res = await fetch(`/api/discovery/leads?${qs}`);
     setLeads(await res.json());
-  }, [status, source, jobType, days, sort]);
+  }, [status, source, jobType, days, scannedDays, sort]);
 
   useEffect(() => {
     load().catch((e) => setErr(String(e)));
@@ -231,6 +280,85 @@ export default function DiscoverPage() {
       clearInterval(id);
     };
   }, [scanning, load, loadLastScan]);
+
+  // Restore an in-flight scoring run after a refresh.
+  useEffect(() => {
+    fetch("/api/discovery/score")
+      .then((r) => r.json())
+      .then((d: ScoreStatus) => {
+        if (d.status === "running" && d.progress) {
+          setScoreProgress(d.progress);
+          setScoring(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Poll scoring progress; reload leads (with fresh scores) when it ends.
+  useEffect(() => {
+    if (!scoring) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch("/api/discovery/score");
+        const data: ScoreStatus = await res.json();
+        if (cancelled) return;
+        if (data.status === "running" && data.progress) {
+          setScoreProgress(data.progress);
+          return;
+        }
+        setScoring(false);
+        setScoreProgress(null);
+        const last = data.lastRun;
+        if (last?.error) {
+          // Scoring tolerates partial failure — some postings get retried next run.
+          setScoreMsg(
+            `Scored ${last.scored} posting${last.scored === 1 ? "" : "s"} — a few couldn't be scored this run and will be retried next time.`
+          );
+        } else if (last) {
+          setScoreMsg(`Scored ${last.scored} posting${last.scored === 1 ? "" : "s"} for you.`);
+        }
+        await load();
+      } catch {
+        // Transient poll failure — keep trying.
+      }
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [scoring, load]);
+
+  async function scoreNow() {
+    setErr(null);
+    setScoreMsg(null);
+    setShowScoreOpts(false);
+    try {
+      const res = await fetch("/api/discovery/score", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxPerScan, recencyDays }),
+      });
+      const data: { status: string; progress?: ScoreProgress; error?: string; code?: string } =
+        await res.json();
+      if (!res.ok) {
+        // Point keyless/profileless users at the right Settings tab.
+        if (data.code === "no_llm_key") {
+          throw new Error("Add your DeepSeek API key in Settings → Credentials to score postings.");
+        }
+        if (data.code === "no_profile") {
+          throw new Error("Add your profile in Settings → Profile to score postings.");
+        }
+        throw new Error(data.error ?? "Couldn't start scoring");
+      }
+      setScoreProgress(data.progress ?? null);
+      setScoring(true);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   async function scan() {
     setErr(null);
@@ -312,7 +440,8 @@ export default function DiscoverPage() {
           </div>
           <h1 className="text-3xl font-semibold">Discover</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1.5">
-            Fresh postings from your trusted sources — apply early, get reviewed first.
+            One shared list of fresh postings — everyone sees the same catalog; your fit scores are
+            your own.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -326,10 +455,73 @@ export default function DiscoverPage() {
               ? `last sweep ${timeAgo(lastScan.finishedAt ?? lastScan.startedAt)} · ${lastScan.created} new`
               : "scan history"}
           </Link>
-          <Button onClick={scan} disabled={scanning}>
-            {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RadarIcon className="h-4 w-4" />}
-            {scanning ? "Scanning…" : "Scan now"}
-          </Button>
+
+          {/* Score now — every user, with their own controls. */}
+          <div className="relative">
+            <div className="flex">
+              <Button
+                variant="outline"
+                onClick={scoreNow}
+                disabled={scoring}
+                className="rounded-r-none"
+                title="Fit-score the catalog with your DeepSeek key"
+              >
+                {scoring ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gauge className="h-4 w-4" />}
+                {scoring ? "Scoring…" : "Score now"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowScoreOpts((s) => !s)}
+                disabled={scoring}
+                className="rounded-l-none border-l-0 px-2"
+                title="Scoring options"
+                aria-label="Scoring options"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+              </Button>
+            </div>
+            {showScoreOpts && (
+              <div className="absolute right-0 z-20 mt-2 w-64 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 shadow-lg space-y-3">
+                <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+                  Scoring controls
+                </div>
+                <label className="block text-xs text-slate-600 dark:text-slate-300">
+                  Max postings to score
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={maxPerScan}
+                    onChange={(e) => setMaxPerScan(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+                    className="mt-1 w-full h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-signal/70"
+                  />
+                </label>
+                <label className="block text-xs text-slate-600 dark:text-slate-300">
+                  Only postings newer than
+                  <select
+                    value={recencyDays}
+                    onChange={(e) => setRecencyDays(Number(e.target.value))}
+                    className={`mt-1 w-full ${SELECT_CLS}`}
+                  >
+                    <option value={7}>7 days</option>
+                    <option value={14}>14 days</option>
+                    <option value={30}>30 days</option>
+                    <option value={60}>60 days</option>
+                  </select>
+                </label>
+                <Button className="w-full" onClick={scoreNow} disabled={scoring}>
+                  <Gauge className="h-4 w-4" /> Score now
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {canScan && (
+            <Button onClick={scan} disabled={scanning}>
+              {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RadarIcon className="h-4 w-4" />}
+              {scanning ? "Scanning…" : "Scan now"}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -354,6 +546,23 @@ export default function DiscoverPage() {
       {scanMsg && (
         <div className="mb-4 rounded-md border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300">
           {scanMsg}
+        </div>
+      )}
+      {scoring && (
+        <div className="mb-4 flex items-center gap-2 rounded-md border border-signal/40 bg-signal/10 px-3 py-2 text-sm text-amber-800 dark:text-signal">
+          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+          <span>
+            Scoring the catalog with your DeepSeek key
+            {scoreProgress && scoreProgress.scored > 0
+              ? ` · ${scoreProgress.scored} scored so far`
+              : ""}
+            {scoreProgress && ` · running for ${elapsed(scoreProgress.startedAt)}`}
+          </span>
+        </div>
+      )}
+      {scoreMsg && (
+        <div className="mb-4 rounded-md border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300">
+          {scoreMsg}
         </div>
       )}
       {err && (
@@ -383,6 +592,17 @@ export default function DiscoverPage() {
           <option value="1">Today</option>
           <option value="3">Last 3 days</option>
           <option value="7">Last 7 days</option>
+        </select>
+        <select
+          className={SELECT_CLS}
+          value={scannedDays}
+          onChange={(e) => setScannedDays(e.target.value)}
+          title="Filter by when a scan discovered the posting"
+        >
+          <option value="">Recently scanned: any</option>
+          <option value="1">Scanned today</option>
+          <option value="3">Scanned ≤ 3 days</option>
+          <option value="7">Scanned ≤ 7 days</option>
         </select>
         <select className={SELECT_CLS} value={jobType} onChange={(e) => setJobType(e.target.value)}>
           <option value="">Any type</option>
