@@ -30,17 +30,17 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
   const hasCoverLetter = kinds.has("cover_letter_pdf");
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-4 md:p-8 max-w-6xl mx-auto">
       <div className="mb-2 text-sm text-slate-500 dark:text-slate-400">
         <Link href="/applications" className="hover:underline">
           ← All applications
         </Link>
       </div>
-      <div className="flex items-start justify-between mb-6">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-semibold">{app.company}</h1>
           <div className="text-slate-600 dark:text-slate-300">{app.role}</div>
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <Badge className={statusColor(app.status)}>{app.status}</Badge>
             <span className="text-xs text-slate-500 dark:text-slate-400">Created {formatDate(app.createdAt)}</span>
             {app.appliedAt && (
@@ -48,7 +48,7 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
             )}
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {hasPdf && (
             <Button asChild variant="outline">
               <a href={`/api/applications/${app.id}/resume?format=pdf`} target="_blank" rel="noreferrer">

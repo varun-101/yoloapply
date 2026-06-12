@@ -15,7 +15,7 @@ export default async function ContactsPage() {
     include: { emails: { orderBy: { createdAt: "desc" }, take: 1 } },
   });
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <div className="p-4 md:p-8 max-w-5xl mx-auto">
       <h1 className="text-2xl font-semibold mb-6">Contacts</h1>
       <Card>
         <CardHeader>
@@ -27,6 +27,7 @@ export default async function ContactsPage() {
               No contacts yet — they&apos;ll show up here as you send cold emails.
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
                 <tr>
@@ -71,6 +72,7 @@ export default async function ContactsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </CardContent>
       </Card>

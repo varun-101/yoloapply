@@ -16,7 +16,7 @@ export default async function AppsList() {
     orderBy: { createdAt: "desc" },
   });
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-4 md:p-8 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Applications</h1>
         <Button asChild>
@@ -33,6 +33,7 @@ export default async function AppsList() {
           {apps.length === 0 ? (
             <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">No applications yet.</div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
                 <tr>
@@ -63,6 +64,7 @@ export default async function AppsList() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </CardContent>
       </Card>

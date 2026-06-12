@@ -63,7 +63,7 @@ export default function ResumePage() {
   }
 
   return (
-    <div className="p-8 max-w-3xl mx-auto">
+    <div className="p-4 md:p-8 max-w-3xl mx-auto">
       <h1 className="text-2xl font-semibold mb-1">Generic Resume</h1>
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
         This PDF is attached to every cold email <em>unless</em> a personalized resume has been generated for
@@ -78,8 +78,8 @@ export default function ResumePage() {
           {info === null ? (
             <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>
           ) : info.exists ? (
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
+            <div className="flex flex-wrap items-start gap-3">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
                 <FileText className="h-8 w-8 text-rose-600 dark:text-rose-400 shrink-0" />
                 <div className="min-w-0">
                   <div className="font-medium truncate">{info.filename ?? "resume.pdf"}</div>
@@ -88,7 +88,7 @@ export default function ResumePage() {
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button asChild variant="outline">
                   <a href="/api/resume/file" target="_blank" rel="noreferrer">
                     <ExternalLink className="h-4 w-4" /> Preview

@@ -124,7 +124,7 @@ export default function ScanHistoryPage() {
   }
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-4 md:p-8 max-w-6xl mx-auto">
       <div className="mb-6">
         <Link
           href="/discover"

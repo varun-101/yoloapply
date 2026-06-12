@@ -112,7 +112,7 @@ export default function NewApplication() {
   const extractingUrl = extract.kind === "fetching" && extract.source === "url";
 
   return (
-    <div className="p-8 max-w-3xl mx-auto">
+    <div className="p-4 md:p-8 max-w-3xl mx-auto">
       <h1 className="text-2xl font-semibold mb-6">New Application</h1>
 
       <Card className="mb-4">

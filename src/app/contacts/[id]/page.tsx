@@ -47,14 +47,14 @@ export default async function ContactDetail({ params }: { params: { id: string }
   const sentCount = c.emails.filter((e) => e.status === "sent").length;
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
+    <div className="p-4 md:p-8 max-w-4xl mx-auto">
       <div className="mb-2 text-sm text-slate-500 dark:text-slate-400">
         <Link href="/contacts" className="hover:underline">
           ← All contacts
         </Link>
       </div>
 
-      <div className="flex items-start justify-between mb-6">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-semibold">{c.name}</h1>
           <div className="text-slate-600 dark:text-slate-300">
