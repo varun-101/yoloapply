@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractFromText } from "@/lib/extractJob";
 import { requireUser, apiError } from "@/lib/auth";
-import { getDeepseekKey } from "@/lib/credentials";
+import { getLlmConfig } from "@/lib/credentials";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -12,7 +12,7 @@ export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser(req);
-    const apiKey = await getDeepseekKey(user.id);
+    const llmCfg = await getLlmConfig(user.id);
     const body = await req.json().catch(() => ({}));
     const text = typeof body.text === "string" ? body.text : "";
     const url = typeof body.url === "string" ? body.url : undefined;
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    const job = await extractFromText(apiKey, text, url);
+    const job = await extractFromText(llmCfg, text, url);
     return NextResponse.json(job);
   } catch (e) {
     return apiError(e);

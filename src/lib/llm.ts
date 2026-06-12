@@ -1,18 +1,23 @@
 import OpenAI from "openai";
 
-// Per-user DeepSeek keys: clients are cached per key (on globalThis so the
-// cache survives HMR, same pattern as db.ts).
+// Resolved config passed from credentials into every LLM call.
+export interface LlmConfig {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+}
+
+// Per-provider clients cached by "apiKey::baseURL" (survives HMR, same pattern as db.ts).
 const globalForLlm = globalThis as unknown as { __llmClients?: Map<string, OpenAI> };
 const clients = (globalForLlm.__llmClients ??= new Map<string, OpenAI>());
 
-export function llm(apiKey: string): OpenAI {
-  const cached = clients.get(apiKey);
+export function llm(apiKey: string, baseURL?: string): OpenAI {
+  const url = baseURL ?? process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com";
+  const cacheKey = `${apiKey}::${url}`;
+  const cached = clients.get(cacheKey);
   if (cached) return cached;
-  const client = new OpenAI({
-    apiKey,
-    baseURL: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
-  });
-  clients.set(apiKey, client);
+  const client = new OpenAI({ apiKey, baseURL: url });
+  clients.set(cacheKey, client);
   return client;
 }
 
@@ -73,6 +78,8 @@ export function parseJsonFromText<T = unknown>(text: string): T {
 
 export interface ChatJsonOptions {
   apiKey: string;
+  baseURL?: string; // provider base URL; falls back to DEEPSEEK_BASE_URL env / deepseek default
+  model?: string;   // overrides LLM_MODEL when set
   system: string;
   user: string;
   maxTokens?: number;
@@ -90,13 +97,14 @@ export interface ChatJsonOptions {
 // headroom by default so it doesn't truncate mid-answer.
 export async function chatJson<T = unknown>(opts: ChatJsonOptions): Promise<T> {
   const maxTokens = opts.maxTokens ?? 8192;
+  const model = opts.model ?? LLM_MODEL;
   const attempts = 3;
   let lastInfo = "";
   let lastParseErr: Error | null = null;
 
   for (let i = 0; i < attempts; i++) {
-    const resp = await llm(opts.apiKey).chat.completions.create({
-      model: LLM_MODEL,
+    const resp = await llm(opts.apiKey, opts.baseURL).chat.completions.create({
+      model,
       max_tokens: maxTokens,
       temperature: opts.temperature ?? 0.4,
       response_format: { type: "json_object" },

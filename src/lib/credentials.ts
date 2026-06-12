@@ -2,33 +2,57 @@ import { randomBytes } from "crypto";
 import { prisma } from "./db";
 import { encryptSecret, decryptSecret, sha256Hex } from "./crypto";
 import { ApiUserError } from "./auth";
+import { type LlmConfig } from "./llm";
+import { getProviderConfig, DEFAULT_PROVIDER } from "./providers";
 
 // Per-user BYO credentials: DeepSeek API key, SMTP (Gmail app password),
 // and the extension API token. Secrets are AES-256-GCM encrypted at rest
 // (src/lib/crypto.ts); the extension token is stored hashed.
 
-async function getActiveSharedKey(): Promise<string | null> {
+async function getActiveSharedLlmConfig(): Promise<LlmConfig | null> {
   const row = await prisma.sharedDeepseekKey.findUnique({ where: { id: 1 } });
   if (!row || row.expiresAt <= new Date()) return null;
-  return decryptSecret(row.keyEnc);
+  const cfg = getProviderConfig(row.llmProvider);
+  return {
+    apiKey: decryptSecret(row.keyEnc),
+    baseURL: cfg.baseURL,
+    model: row.llmModel || cfg.defaultModel,
+  };
 }
 
-export async function getDeepseekKey(userId: string): Promise<string> {
+function buildLlmConfig(encKey: string, provider?: string | null, model?: string | null): LlmConfig {
+  const cfg = getProviderConfig(provider);
+  return {
+    apiKey: decryptSecret(encKey),
+    baseURL: cfg.baseURL,
+    model: model || cfg.defaultModel,
+  };
+}
+
+export async function getLlmConfig(userId: string): Promise<LlmConfig> {
   const cred = await prisma.userCredential.findUnique({ where: { userId } });
-  if (cred?.deepseekKeyEnc) return decryptSecret(cred.deepseekKeyEnc);
-  const shared = await getActiveSharedKey();
+  if (cred?.deepseekKeyEnc) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = cred as any;
+    return buildLlmConfig(cred.deepseekKeyEnc, c.llmProvider, c.llmModel);
+  }
+  const shared = await getActiveSharedLlmConfig();
   if (shared) return shared;
   throw new ApiUserError(
-    "Add your DeepSeek API key first (Settings → Credentials).",
+    "Add your LLM API key first (Settings → Credentials).",
     400,
     "no_llm_key"
   );
 }
 
-export async function getDeepseekKeyOrNull(userId: string): Promise<string | null> {
+export async function getLlmConfigOrNull(userId: string): Promise<LlmConfig | null> {
   const cred = await prisma.userCredential.findUnique({ where: { userId } });
-  if (cred?.deepseekKeyEnc) return decryptSecret(cred.deepseekKeyEnc);
-  return getActiveSharedKey();
+  if (cred?.deepseekKeyEnc) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = cred as any;
+    return buildLlmConfig(cred.deepseekKeyEnc, c.llmProvider, c.llmModel);
+  }
+  return getActiveSharedLlmConfig();
 }
 
 export interface SmtpConfig {
@@ -59,6 +83,8 @@ export async function getSmtpConfig(userId: string): Promise<SmtpConfig> {
 
 export interface CredentialUpdate {
   deepseekKey?: string | null; // undefined = leave, null = clear, string = set
+  llmProvider?: string | null;
+  llmModel?: string | null;
   smtpHost?: string | null;
   smtpPort?: number | null;
   smtpUser?: string | null;
@@ -70,6 +96,12 @@ export async function setCredentials(userId: string, update: CredentialUpdate) {
   const data: Record<string, unknown> = {};
   if (update.deepseekKey !== undefined) {
     data.deepseekKeyEnc = update.deepseekKey ? encryptSecret(update.deepseekKey) : null;
+  }
+  if (update.llmProvider !== undefined) {
+    data.llmProvider = update.llmProvider || DEFAULT_PROVIDER;
+  }
+  if (update.llmModel !== undefined) {
+    data.llmModel = update.llmModel || null;
   }
   if (update.smtpPass !== undefined) {
     data.smtpPassEnc = update.smtpPass ? encryptSecret(update.smtpPass) : null;

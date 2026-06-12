@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Key, Loader2, RadarIcon, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { PROVIDER_CONFIGS, DEFAULT_PROVIDER } from "@/lib/providers";
 
 interface AdminUser {
   id: string;
@@ -68,6 +69,8 @@ export function AdminPanel() {
   const [sharedKey, setSharedKey] = useState<SharedKeyStatus | null>(null);
   const [keyInput, setKeyInput] = useState("");
   const [expiryInput, setExpiryInput] = useState("");
+  const [keyProvider, setKeyProvider] = useState(DEFAULT_PROVIDER);
+  const [keyModel, setKeyModel] = useState("");
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyMsg, setKeyMsg] = useState<string | null>(null);
   const [keyErr, setKeyErr] = useState<string | null>(null);
@@ -149,7 +152,7 @@ export function AdminPanel() {
       const res = await fetch("/api/admin/shared-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: keyInput, expiresAt }),
+        body: JSON.stringify({ key: keyInput, expiresAt, llmProvider: keyProvider, llmModel: keyModel || null }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save");
       setKeyInput("");
@@ -240,12 +243,34 @@ export function AdminPanel() {
             </div>
           )}
 
+          <div className="flex flex-wrap gap-2 mb-1">
+            {Object.entries(PROVIDER_CONFIGS).map(([value, cfg]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setKeyProvider(value)}
+                className={`px-2.5 py-1 rounded-md border text-xs transition-colors ${
+                  keyProvider === value
+                    ? "border-signal bg-signal/10 text-amber-900 dark:text-signal font-medium"
+                    : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400"
+                }`}
+              >
+                {cfg.label}
+              </button>
+            ))}
+          </div>
           <div className="flex flex-wrap gap-2">
             <Input
               type="password"
-              placeholder="sk-…"
+              placeholder={PROVIDER_CONFIGS[keyProvider]?.keyHint ?? "key…"}
               value={keyInput}
               onChange={(e) => setKeyInput(e.target.value)}
+              className="flex-1 min-w-48 font-mono text-sm"
+            />
+            <Input
+              placeholder={`model (default: ${PROVIDER_CONFIGS[keyProvider]?.defaultModel ?? ""})`}
+              value={keyModel}
+              onChange={(e) => setKeyModel(e.target.value)}
               className="flex-1 min-w-48 font-mono text-sm"
             />
             <input

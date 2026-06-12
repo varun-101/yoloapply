@@ -1,7 +1,7 @@
 import { chatJson, deAi } from "./llm";
 import { getProfile, CandidateProfile } from "./profile";
 import { getProjectBank } from "./projectBank";
-import { getDeepseekKey } from "./credentials";
+import { getLlmConfig } from "./credentials";
 
 const SYSTEM = `You write tailored, sincere cover letters for a software-engineering candidate. The letter must be specific, confident, and grounded ONLY in the candidate's real experience and projects — never fabricate employers, metrics, technologies, or claims.
 
@@ -27,10 +27,10 @@ interface Input {
 }
 
 export async function generateCoverLetter(userId: string, input: Input): Promise<CoverLetterDraft> {
-  const [profile, projectBank, apiKey] = await Promise.all([
+  const [profile, projectBank, llmCfg] = await Promise.all([
     getProfile(userId),
     getProjectBank(userId),
-    getDeepseekKey(userId),
+    getLlmConfig(userId),
   ]);
   const candidate = {
     name: profile.name,
@@ -66,7 +66,7 @@ ${input.jobDescription ? `Job description:\n"""\n${input.jobDescription.slice(0,
 Write the cover letter per the schema. Pick the proof points that best match THIS job. Salutation should address the company by name where natural (e.g. "Dear ${input.company} Hiring Team,"). Stay truthful to the candidate's data.`;
 
   const draft = await chatJson<CoverLetterDraft>({
-    apiKey,
+    ...llmCfg,
     system: SYSTEM,
     user: userPrompt,
     maxTokens: 6144,

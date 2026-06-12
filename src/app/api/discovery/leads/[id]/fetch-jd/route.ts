@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { extractFromUrl } from "@/lib/extractJob";
 import { requireUser, apiError } from "@/lib/auth";
-import { getDeepseekKey } from "@/lib/credentials";
+import { getLlmConfig } from "@/lib/credentials";
 
 export const maxDuration = 120;
 
@@ -12,7 +12,7 @@ export const maxDuration = 120;
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser(req);
-    const apiKey = await getDeepseekKey(user.id);
+    const llmCfg = await getLlmConfig(user.id);
     // Enriching the JD updates the SHARED catalog row — it benefits everyone.
     const lead = await prisma.jobLead.findUnique({ where: { id: params.id } });
     if (!lead) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
 
     try {
-      const job = await extractFromUrl(apiKey, lead.url);
+      const job = await extractFromUrl(llmCfg, lead.url);
       if (!job.jdText || job.jdText.trim().length < 50) {
         return NextResponse.json(
           { error: "Fetched the page but couldn't extract a usable job description." },

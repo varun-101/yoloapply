@@ -1,7 +1,7 @@
 import { chatJson, deAi } from "./llm";
 import { getProfile } from "./profile";
 import { getProjectBank } from "./projectBank";
-import { getDeepseekKey } from "./credentials";
+import { getLlmConfig } from "./credentials";
 
 // A field as seen by the content script.
 export interface FormFieldSpec {
@@ -68,10 +68,10 @@ interface MapInput {
 }
 
 export async function mapAutofill(userId: string, input: MapInput): Promise<MappedField[]> {
-  const [profile, projectBank, apiKey] = await Promise.all([
+  const [profile, projectBank, llmCfg] = await Promise.all([
     getProfile(userId),
     getProjectBank(userId),
-    getDeepseekKey(userId),
+    getLlmConfig(userId),
   ]);
   const candidate = {
     name: profile.name,
@@ -115,7 +115,7 @@ ${JSON.stringify(input.fields, null, 2)}
 Return the JSON mapping with one entry per field id. Remember: selects must use an exact option string; never invent facts; skip anything sensitive or unknowable.`;
 
   const out = await chatJson<{ fields: MappedField[] }>({
-    apiKey,
+    ...llmCfg,
     system: SYSTEM,
     user: userPrompt,
     maxTokens: 8192,

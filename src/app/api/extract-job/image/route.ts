@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractFromImage } from "@/lib/extractJob";
 import { requireUser, apiError } from "@/lib/auth";
-import { getDeepseekKey } from "@/lib/credentials";
+import { getLlmConfig } from "@/lib/credentials";
 
 export const maxDuration = 120;
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   let user;
-  let apiKey: string;
+  let llmCfg: Awaited<ReturnType<typeof getLlmConfig>>;
   try {
     user = await requireUser(req);
-    apiKey = await getDeepseekKey(user.id);
+    llmCfg = await getLlmConfig(user.id);
   } catch (e) {
     return apiError(e);
   }
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const job = await extractFromImage(apiKey, buf, mimeType);
+    const job = await extractFromImage(llmCfg, buf, mimeType);
     return NextResponse.json(job);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

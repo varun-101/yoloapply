@@ -1,7 +1,7 @@
-import { chatJson } from "../llm";
+import { chatJson, type LlmConfig } from "../llm";
 import { getProfileOrNull, CandidateProfile } from "../profile";
 import { getProjectBank, ProjectBankItem } from "../projectBank";
-import { getDeepseekKeyOrNull } from "../credentials";
+import { getLlmConfigOrNull } from "../credentials";
 import { ensureSearchPrefs } from "../searchPrefs";
 import { prisma } from "../db";
 
@@ -74,7 +74,7 @@ interface LeadForScoring {
 async function scoreBatch(
   userId: string,
   scanRunId: string | undefined,
-  apiKey: string,
+  llmCfg: LlmConfig,
   system: string,
   summary: string,
   leads: LeadForScoring[]
@@ -95,7 +95,7 @@ async function scoreBatch(
     .join("\n---\n");
 
   const out = await chatJson<{ scores: { id: string; score: number; reason: string }[] }>({
-    apiKey,
+    ...llmCfg,
     system,
     user: `# CANDIDATE\n${summary}\n\n# POSTINGS\n${list}\n\n# TASK\nScore every posting.`,
     temperature: 0.2,
@@ -127,9 +127,9 @@ export async function scoreNewLeads(
   opts: ScoreOptions = {},
   onProgress?: (scored: number) => void
 ): Promise<{ scored: number; total: number; error?: string }> {
-  const apiKey = await getDeepseekKeyOrNull(userId);
-  if (!apiKey) {
-    return { scored: 0, total: 0, error: "no DeepSeek key configured — skipped scoring" };
+  const llmCfg = await getLlmConfigOrNull(userId);
+  if (!llmCfg) {
+    return { scored: 0, total: 0, error: "no LLM key configured — skipped scoring" };
   }
   const profile = await getProfileOrNull(userId);
   if (!profile) {
@@ -178,7 +178,7 @@ export async function scoreNewLeads(
       scored += await scoreBatch(
         userId,
         opts.scanRunId,
-        apiKey,
+        llmCfg,
         system,
         summary,
         leads.slice(i, i + BATCH_SIZE)

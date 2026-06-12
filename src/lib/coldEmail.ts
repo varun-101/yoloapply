@@ -1,7 +1,7 @@
 import { chatJson, deAi } from "./llm";
 import { getProfile } from "./profile";
 import { getProjectBank } from "./projectBank";
-import { getDeepseekKey } from "./credentials";
+import { getLlmConfig } from "./credentials";
 
 const SYSTEM = `You write cold outreach emails on behalf of an early-career software engineer applying to startups and tech companies. The tone is sincere, specific, and confident — never groveling, never spammy. The recipient is a senior leader (CEO, founder, head of engineering) — they get dozens of these a week, so the email must earn the next sentence with the first one.
 
@@ -51,10 +51,10 @@ export interface ColdEmailDraft {
 }
 
 export async function draftColdEmail(userId: string, input: DraftInput): Promise<ColdEmailDraft> {
-  const [profile, projectBank, apiKey] = await Promise.all([
+  const [profile, projectBank, llmCfg] = await Promise.all([
     getProfile(userId),
     getProjectBank(userId),
-    getDeepseekKey(userId),
+    getLlmConfig(userId),
   ]);
   const candidate = {
     name: profile.name,
@@ -97,7 +97,7 @@ Output STRICT JSON:
 }`;
 
   const draft = await chatJson<ColdEmailDraft>({
-    apiKey,
+    ...llmCfg,
     system: SYSTEM,
     user: userPrompt,
     maxTokens: 4096,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireUser, apiError, ApiUserError } from "@/lib/auth";
-import { getDeepseekKey } from "@/lib/credentials";
+import { getLlmConfig } from "@/lib/credentials";
 import { getProfileOrNull } from "@/lib/profile";
 import { ensureSearchPrefs } from "@/lib/searchPrefs";
 import { startUserScoring, getUserScoringProgress } from "@/lib/discovery/pipeline";
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireUser(req);
     // Surface the right Settings hint before kicking off a background task.
-    await getDeepseekKey(user.id); // throws no_llm_key
+    await getLlmConfig(user.id); // throws no_llm_key
     if (!(await getProfileOrNull(user.id))) {
       throw new ApiUserError("Add your profile first (Settings → Profile).", 400, "no_profile");
     }

@@ -1,4 +1,4 @@
-import { chatJson, llm, LLM_MODEL, parseJsonFromText } from "./llm";
+import { chatJson, llm, LLM_MODEL, parseJsonFromText, type LlmConfig } from "./llm";
 
 export interface ExtractedJob {
   company: string;
@@ -38,12 +38,12 @@ Extract the structured job data per the schema. Pay attention:
 }
 
 export async function extractFromText(
-  apiKey: string,
+  cfg: LlmConfig,
   rawText: string,
   hintUrl?: string
 ): Promise<ExtractedJob> {
   const out = await chatJson<ExtractedJob>({
-    apiKey,
+    ...cfg,
     system: SYSTEM,
     user: userPromptFor(rawText, hintUrl),
     maxTokens: 8192,
@@ -80,7 +80,7 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
-export async function extractFromUrl(apiKey: string, url: string): Promise<ExtractedJob> {
+export async function extractFromUrl(cfg: LlmConfig, url: string): Promise<ExtractedJob> {
   const res = await fetch(url, {
     headers: {
       "User-Agent":
@@ -103,19 +103,19 @@ export async function extractFromUrl(apiKey: string, url: string): Promise<Extra
       "Fetched the page, but couldn't extract enough text. The page probably needs JS to render. Paste the JD or upload a screenshot."
     );
   }
-  return extractFromText(apiKey, text, url);
+  return extractFromText(cfg, text, url);
 }
 
 // Try DeepSeek vision (image_url content block). Fast path — works in 1-3 seconds
 // when the model supports vision.
-async function extractViaDeepSeekVision(
-  apiKey: string,
+async function extractViaVision(
+  cfg: LlmConfig,
   buf: Buffer,
   mimeType: string
 ): Promise<ExtractedJob> {
   const dataUrl = `data:${mimeType};base64,${buf.toString("base64")}`;
-  const resp = await llm(apiKey).chat.completions.create({
-    model: LLM_MODEL,
+  const resp = await llm(cfg.apiKey, cfg.baseURL).chat.completions.create({
+    model: cfg.model ?? LLM_MODEL,
     max_tokens: 8192,
     temperature: 0.2,
     response_format: { type: "json_object" },
@@ -154,7 +154,7 @@ async function extractViaDeepSeekVision(
 
 // Last-resort OCR fallback. Slow (downloads ~30MB language data on first run,
 // CPU-bound recognition) — only used when the vision model doesn't accept images.
-async function extractViaTesseract(apiKey: string, buf: Buffer): Promise<ExtractedJob> {
+async function extractViaTesseract(cfg: LlmConfig, buf: Buffer): Promise<ExtractedJob> {
   const { recognize } = await import("tesseract.js");
   const {
     data: { text },
@@ -162,7 +162,7 @@ async function extractViaTesseract(apiKey: string, buf: Buffer): Promise<Extract
   if (!text || text.trim().length < 50) {
     throw new Error("OCR didn't find readable text in that image. Try a clearer screenshot.");
   }
-  return extractFromText(apiKey, text);
+  return extractFromText(cfg, text);
 }
 
 // Heuristic: did the LLM reject the image because it doesn't support vision?
@@ -179,16 +179,16 @@ function looksLikeVisionUnsupported(e: unknown): boolean {
 }
 
 export async function extractFromImage(
-  apiKey: string,
+  cfg: LlmConfig,
   buf: Buffer,
   mimeType = "image/png"
 ): Promise<ExtractedJob> {
   try {
-    return await extractViaDeepSeekVision(apiKey, buf, mimeType);
+    return await extractViaVision(cfg, buf, mimeType);
   } catch (e) {
     if (looksLikeVisionUnsupported(e)) {
       // Vision unavailable on this model — fall back to OCR + text extraction.
-      return await extractViaTesseract(apiKey, buf);
+      return await extractViaTesseract(cfg, buf);
     }
     throw e;
   }

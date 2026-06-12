@@ -5,10 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Check, Copy, KeyRound, Loader2, Mail, Plug, Save, Trash2 } from "lucide-react";
+import { PROVIDER_CONFIGS, DEFAULT_PROVIDER } from "@/lib/providers";
 
 interface CredStatus {
   deepseekKeySet: boolean;
   deepseekLast4: string | null;
+  llmProvider: string;
+  llmModel: string | null;
   smtpHost: string | null;
   smtpPort: number | null;
   smtpUser: string | null;
@@ -16,6 +19,14 @@ interface CredStatus {
   smtpPassSet: boolean;
   extensionTokenPrefix: string | null;
 }
+
+const PROVIDER_OPTIONS = Object.entries(PROVIDER_CONFIGS).map(([value, cfg]) => ({
+  value,
+  label: cfg.label,
+  keyHint: cfg.keyHint,
+  defaultModel: cfg.defaultModel,
+  docsUrl: cfg.docsUrl,
+}));
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -35,6 +46,8 @@ export default function CredentialsSettings() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const [llmProvider, setLlmProvider] = useState(DEFAULT_PROVIDER);
+  const [llmModel, setLlmModel] = useState("");
   const [deepseekKey, setDeepseekKey] = useState("");
   const [smtpHost, setSmtpHost] = useState("smtp.gmail.com");
   const [smtpPort, setSmtpPort] = useState("587");
@@ -51,6 +64,8 @@ export default function CredentialsSettings() {
       .then((r) => r.json())
       .then((d: CredStatus) => {
         setStatus(d);
+        setLlmProvider(d.llmProvider ?? DEFAULT_PROVIDER);
+        setLlmModel(d.llmModel ?? "");
         if (d.smtpHost) setSmtpHost(d.smtpHost);
         if (d.smtpPort) setSmtpPort(String(d.smtpPort));
         if (d.smtpUser) setSmtpUser(d.smtpUser);
@@ -160,36 +175,90 @@ export default function CredentialsSettings() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
-            <KeyRound className="h-4 w-4" /> DeepSeek API key
+            <KeyRound className="h-4 w-4" /> LLM provider &amp; API key
           </CardTitle>
           {status.deepseekKeySet ? (
             <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
-              saved · <span className="font-mono ml-1">…{status.deepseekLast4}</span>
+              {PROVIDER_CONFIGS[status.llmProvider]?.label ?? status.llmProvider} · <span className="font-mono ml-1">…{status.deepseekLast4}</span>
             </Badge>
           ) : (
             <Badge className="bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">not set</Badge>
           )}
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Powers fit-scoring, resume personalization, cold-email drafting and form answers — all
-            billed to your own DeepSeek account (
-            <a href="https://platform.deepseek.com" target="_blank" rel="noreferrer" className="underline">
-              platform.deepseek.com
-            </a>
-            ). Stored encrypted; never shown again after saving.
+            Powers fit-scoring, resume personalization, cold-email drafting, and form answers — billed to your own account.
+            Stored encrypted; never shown again after saving.
           </p>
-          <div className="flex gap-2">
+
+          <Field label="Provider">
+            <div className="flex flex-wrap gap-2">
+              {PROVIDER_OPTIONS.map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => setLlmProvider(p.value)}
+                  className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${
+                    llmProvider === p.value
+                      ? "border-signal bg-signal/10 text-amber-900 dark:text-signal font-medium"
+                      : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {PROVIDER_CONFIGS[llmProvider] && (
+              <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+                Get your key at{" "}
+                <a href={PROVIDER_CONFIGS[llmProvider].docsUrl} target="_blank" rel="noreferrer" className="underline">
+                  {PROVIDER_CONFIGS[llmProvider].docsUrl.replace("https://", "")}
+                </a>
+              </p>
+            )}
+          </Field>
+
+          <Field label="API key">
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                value={deepseekKey}
+                onChange={(e) => setDeepseekKey(e.target.value)}
+                placeholder={status.deepseekKeySet ? "enter a new key to replace" : (PROVIDER_CONFIGS[llmProvider]?.keyHint ?? "key…")}
+                autoComplete="off"
+              />
+            </div>
+          </Field>
+
+          <Field
+            label={`Model (optional — leave blank for ${PROVIDER_CONFIGS[llmProvider]?.defaultModel ?? "provider default"})`}
+          >
             <Input
-              type="password"
-              value={deepseekKey}
-              onChange={(e) => setDeepseekKey(e.target.value)}
-              placeholder={status.deepseekKeySet ? "enter a new key to replace" : "sk-…"}
-              autoComplete="off"
+              value={llmModel}
+              onChange={(e) => setLlmModel(e.target.value)}
+              placeholder={PROVIDER_CONFIGS[llmProvider]?.defaultModel ?? ""}
             />
+            {llmProvider === "openrouter" && (
+              <span className="mt-1 block text-xs text-slate-400 dark:text-slate-500">
+                Any model slug from{" "}
+                <a href="https://openrouter.ai/models" target="_blank" rel="noreferrer" className="underline">
+                  openrouter.ai/models
+                </a>
+                , e.g. <code className="font-mono">google/gemini-2.5-flash</code> or <code className="font-mono">anthropic/claude-sonnet-4-5</code>
+              </span>
+            )}
+          </Field>
+
+          <div className="flex flex-wrap gap-2">
             <Button
-              onClick={() => put({ deepseekKey }, "deepseek", "DeepSeek key saved.").then(() => setDeepseekKey(""))}
-              disabled={busy !== null || !deepseekKey.trim()}
+              onClick={() =>
+                put(
+                  { deepseekKey: deepseekKey || undefined, llmProvider, llmModel: llmModel || null },
+                  "deepseek",
+                  "LLM credentials saved."
+                ).then(() => setDeepseekKey(""))
+              }
+              disabled={busy !== null || (!deepseekKey.trim() && !status.deepseekKeySet)}
             >
               {busy === "deepseek" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               Save
@@ -197,10 +266,10 @@ export default function CredentialsSettings() {
             {status.deepseekKeySet && (
               <Button
                 variant="outline"
-                onClick={() => put({ deepseekKey: null }, "deepseek", "DeepSeek key removed.")}
+                onClick={() => put({ deepseekKey: null }, "deepseek", "LLM key removed.")}
                 disabled={busy !== null}
               >
-                <Trash2 className="h-4 w-4" /> Remove
+                <Trash2 className="h-4 w-4" /> Remove key
               </Button>
             )}
           </div>

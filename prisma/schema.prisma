@@ -109,7 +109,9 @@ model UserCredential {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  deepseekKeyEnc String?
+  deepseekKeyEnc String? // stores the API key for whichever provider is selected
+  llmProvider    String  @default("deepseek") // "deepseek" | "openrouter" | "gemini" | "openai"
+  llmModel       String? // optional model override; falls back to provider default
   smtpHost       String?
   smtpPort       Int?
   smtpUser       String? // an email address — not secret
@@ -334,10 +336,12 @@ model AtsCompany {
 // Singleton row (id=1) — admin sets a shared DeepSeek key with an expiry.
 // Users without their own key fall back to this during the active window.
 model SharedDeepseekKey {
-  id        Int      @id @default(1)
-  keyEnc    String   // AES-256-GCM encrypted via src/lib/crypto.ts
-  expiresAt DateTime
-  updatedAt DateTime @updatedAt
+  id          Int      @id @default(1)
+  keyEnc      String   // AES-256-GCM encrypted via src/lib/crypto.ts
+  llmProvider String   @default("deepseek")
+  llmModel    String?  // optional model override
+  expiresAt   DateTime
+  updatedAt   DateTime @updatedAt
 }
 
 model Event {

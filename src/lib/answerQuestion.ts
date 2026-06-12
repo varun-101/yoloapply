@@ -1,7 +1,7 @@
 import { chatJson, deAi } from "./llm";
 import { getProfile } from "./profile";
 import { getProjectBank } from "./projectBank";
-import { getDeepseekKey } from "./credentials";
+import { getLlmConfig } from "./credentials";
 
 const SYSTEM = `You are filling out a job application on behalf of a software-engineering candidate. The form will ask free-text questions — "Why this company?", "Tell us about a project you've shipped", "What's your salary expectation?", etc.
 
@@ -34,10 +34,10 @@ export interface AnsweredQuestion {
 }
 
 export async function answerQuestion(userId: string, input: AnswerInput): Promise<AnsweredQuestion> {
-  const [profile, projectBank, apiKey] = await Promise.all([
+  const [profile, projectBank, llmCfg] = await Promise.all([
     getProfile(userId),
     getProjectBank(userId),
-    getDeepseekKey(userId),
+    getLlmConfig(userId),
   ]);
   const candidate = {
     name: profile.name,
@@ -74,7 +74,7 @@ ${input.maxChars ? `\nMax length: ${input.maxChars} characters.` : ""}
 Produce the JSON-format answer per the schema. If the question is a yes/no or a single-word answer, keep it to that. If it's open-ended, write naturally — short, direct, specific.`;
 
   const out = await chatJson<AnsweredQuestion>({
-    apiKey,
+    ...llmCfg,
     system: SYSTEM,
     user: userPrompt,
     maxTokens: 6144,

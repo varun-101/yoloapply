@@ -1,7 +1,7 @@
-import { chatJson } from "./llm";
+import { chatJson, type LlmConfig } from "./llm";
 import { getProjectBank, ProjectBankItem } from "./projectBank";
 import { getProfile, CandidateProfile } from "./profile";
-import { getDeepseekKey } from "./credentials";
+import { getLlmConfig } from "./credentials";
 import { ResumeDraft } from "./latex";
 
 const SYSTEM_PROMPT = `You are an expert technical resume writer helping a software engineer tailor their resume to a specific job description.
@@ -49,23 +49,23 @@ function tightnessRules(t: 0 | 1 | 2): string {
 export interface PersonalizeContext {
   profile: CandidateProfile;
   projectBank: ProjectBankItem[];
-  apiKey: string;
+  llmCfg: LlmConfig;
 }
 
 export async function loadPersonalizeContext(userId: string): Promise<PersonalizeContext> {
-  const [profile, projectBank, apiKey] = await Promise.all([
+  const [profile, projectBank, llmCfg] = await Promise.all([
     getProfile(userId),
     getProjectBank(userId),
-    getDeepseekKey(userId),
+    getLlmConfig(userId),
   ]);
-  return { profile, projectBank, apiKey };
+  return { profile, projectBank, llmCfg };
 }
 
 export async function personalizeResume(
   ctx: PersonalizeContext,
   input: PersonalizeInput
 ): Promise<ResumeDraft> {
-  const { profile, projectBank, apiKey } = ctx;
+  const { profile, projectBank, llmCfg } = ctx;
   const candidate = {
     name: profile.name,
     education: profile.education,
@@ -125,7 +125,7 @@ ${tightnessRules(input.tightness ?? 0)}
     experienceBullets: { index: number; bullets: string[] }[];
   };
   const parsed = await chatJson<ModelOut>({
-    apiKey,
+    ...llmCfg,
     system: SYSTEM_PROMPT,
     user: userPrompt,
     maxTokens: 8192,

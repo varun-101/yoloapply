@@ -18,6 +18,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       deepseekKeySet: !!cred?.deepseekKeyEnc,
       deepseekLast4,
+      llmProvider: cred?.llmProvider ?? "deepseek",
+      llmModel: cred?.llmModel ?? null,
       smtpHost: cred?.smtpHost ?? null,
       smtpPort: cred?.smtpPort ?? null,
       smtpUser: cred?.smtpUser ?? null,
@@ -32,6 +34,8 @@ export async function GET(req: NextRequest) {
 
 interface CredentialsBody {
   deepseekKey?: string | null;
+  llmProvider?: string | null;
+  llmModel?: string | null;
   smtpHost?: string | null;
   smtpPort?: number | null;
   smtpUser?: string | null;
@@ -45,6 +49,8 @@ export async function PUT(req: NextRequest) {
     const body = (await req.json()) as CredentialsBody;
     await setCredentials(user.id, {
       deepseekKey: body.deepseekKey,
+      llmProvider: body.llmProvider,
+      llmModel: body.llmModel,
       smtpHost: body.smtpHost,
       smtpPort: body.smtpPort,
       smtpUser: body.smtpUser,
