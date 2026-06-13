@@ -13,8 +13,24 @@ import { resolveCompanyDomain } from "@/lib/contacts/domain";
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser(req);
-    const body = await req.json().catch(() => ({}));
-    const { applicationId, company: companyIn, domain: domainIn, force } = body ?? {};
+    // An empty body is allowed (defaults to {}); a non-empty but malformed body
+    // is a client bug we surface explicitly rather than masking as "company
+    // required". Read raw text so we can tell the two apart.
+    const raw = await req.text();
+    let body: Record<string, unknown> = {};
+    if (raw.trim()) {
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+      }
+    }
+    const { applicationId, company: companyIn, domain: domainIn, force } = body as {
+      applicationId?: string;
+      company?: string;
+      domain?: string;
+      force?: boolean;
+    };
 
     let company: string = companyIn ?? "";
     const urls: (string | null | undefined)[] = [];

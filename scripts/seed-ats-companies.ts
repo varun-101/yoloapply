@@ -28,14 +28,31 @@ interface ProbeResult {
   relevantIndiaJobs: number;
 }
 
-// The original hand-picked watchlist, kept regardless of what the probe saw.
+// The hand-picked watchlist, kept regardless of what the probe saw. Every slug
+// below was verified live (HTTP 200) with current India-located postings at the
+// time it was added — re-verify with scripts/probe-ats-companies.ts if a board
+// starts auto-deactivating. Indian-HQ startups plus global-product companies
+// with large India engineering offices that routinely post junior India roles.
 const ORIGINAL_WATCHLIST: Pick<ProbeResult, "ats" | "name" | "slug">[] = [
+  // Indian-HQ / India-first
   { name: "Groww", ats: "greenhouse", slug: "groww" },
   { name: "Postman", ats: "greenhouse", slug: "postman" },
   { name: "PhonePe", ats: "greenhouse", slug: "phonepe" },
+  { name: "Druva", ats: "greenhouse", slug: "druva" },
+  { name: "HighRadius", ats: "greenhouse", slug: "highradius" },
   { name: "CRED", ats: "lever", slug: "cred" },
   { name: "Meesho", ats: "lever", slug: "meesho" },
+  { name: "Mindtickle", ats: "lever", slug: "mindtickle" },
   { name: "Atlan", ats: "ashby", slug: "atlan" },
+  // Global product companies with large India engineering offices
+  { name: "MongoDB", ats: "greenhouse", slug: "mongodb" },
+  { name: "Databricks", ats: "greenhouse", slug: "databricks" },
+  { name: "Stripe", ats: "greenhouse", slug: "stripe" },
+  { name: "GitLab", ats: "greenhouse", slug: "gitlab" },
+  { name: "Cloudflare", ats: "greenhouse", slug: "cloudflare" },
+  { name: "Elastic", ats: "greenhouse", slug: "elastic" },
+  { name: "Zscaler", ats: "greenhouse", slug: "zscaler" },
+  { name: "Rubrik", ats: "greenhouse", slug: "rubrik" },
 ];
 
 async function main() {

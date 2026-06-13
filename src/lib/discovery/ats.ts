@@ -26,9 +26,11 @@ interface BoardCompany {
 }
 
 // True when the posting matches at least one participating user's filters.
-type LeadMatcher = (title: string, location: string | undefined, isRemote?: boolean) => boolean;
+export type LeadMatcher = (title: string, location: string | undefined, isRemote?: boolean) => boolean;
 
-function anyUserMatcher(prefsList: SearchPrefs[]): LeadMatcher {
+// Shared by the firehose sources (ATS boards + the remote aggregators): keep a
+// posting if ANY participating user's title/location prefs want it.
+export function anyUserMatcher(prefsList: SearchPrefs[]): LeadMatcher {
   return (title, location, isRemote) =>
     prefsList.some((p) => titleMatches(p, title) && locationMatches(p, location, isRemote));
 }

@@ -3,7 +3,10 @@ import { prisma } from "../db";
 import { fetchAtsLeads } from "./ats";
 import { fetchHnLeads } from "./hn";
 import { fetchJobfoundLeads } from "./jobfound";
+import { fetchRemoteOkLeads } from "./remoteok";
+import { fetchRemotiveLeads } from "./remotive";
 import { fetchSheetLeads } from "./sheet";
+import { fetchWeWorkRemotelyLeads } from "./weworkremotely";
 import { scoreNewLeads, type ScoreOptions } from "./score";
 import { ensureSearchPrefs, type SearchPrefs } from "../searchPrefs";
 import type { FetchResult, RawLead } from "./types";
@@ -167,7 +170,7 @@ export function runGlobalFetch(
     const state: GlobalFetchState = {
       promise: Promise.resolve(null as never), // replaced synchronously below
       sourcesDone: 0,
-      sourcesTotal: 4,
+      sourcesTotal: 7,
     };
     g.__globalFetch = state;
     state.promise = doGlobalFetch(trigger, extraUserIds, state).finally(() => {
@@ -209,13 +212,16 @@ async function doGlobalFetch(
         state.sourcesDone++;
         return r;
       });
-    const [sheet, jobfound, ats, hn] = await Promise.all([
+    const [sheet, jobfound, ats, hn, wwr, remoteok, remotive] = await Promise.all([
       tick(fetchSheetLeads()),
       tick(fetchJobfoundLeads()),
       tick(fetchAtsLeads(prefsList, seenByAll)),
       tick(fetchHnLeads(seenByAll)),
+      tick(fetchWeWorkRemotelyLeads(prefsList)),
+      tick(fetchRemoteOkLeads(prefsList)),
+      tick(fetchRemotiveLeads(prefsList)),
     ]);
-    const results = [sheet, jobfound, ...ats, hn];
+    const results = [sheet, jobfound, ...ats, hn, wwr, remoteok, remotive];
 
     // Ingest into the shared catalog ONCE (dedupe across sources + history).
     const { stats, created } = await ingestCatalog(results);

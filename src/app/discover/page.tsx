@@ -586,6 +586,9 @@ export default function DiscoverPage() {
           <option value="lever">Lever</option>
           <option value="ashby">Ashby</option>
           <option value="hn">HN Who&apos;s Hiring</option>
+          <option value="weworkremotely">WeWorkRemotely</option>
+          <option value="remoteok">RemoteOK</option>
+          <option value="remotive">Remotive</option>
         </select>
         <select className={SELECT_CLS} value={days} onChange={(e) => setDays(e.target.value)}>
           <option value="">Any date</option>

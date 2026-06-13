@@ -78,12 +78,24 @@ export async function fetchPortfolioContacts(
     for (const person of targets) {
       const links = await searchLinks(person.name, company, searchKey);
       let resolved: string | null = null;
+      let viaLlm = false; // regex-scraped address vs. LLM-inferred from the page
       for (const link of links) {
         const html = await fetchText(link);
         if (!html) continue;
         const text = htmlToText(html);
-        resolved = pickEmail(text, companyDomain) ?? (llm ? await llmExtractEmail(text, person.name, llm) : null);
-        if (resolved) break;
+        const direct = pickEmail(text, companyDomain);
+        if (direct) {
+          resolved = direct;
+          break;
+        }
+        if (llm) {
+          const inferred = await llmExtractEmail(text, person.name, llm);
+          if (inferred) {
+            resolved = inferred;
+            viaLlm = true;
+            break;
+          }
+        }
       }
       if (resolved) {
         candidates.push({
@@ -92,9 +104,12 @@ export async function fetchPortfolioContacts(
           linkedinUrl: person.linkedinUrl,
           email: resolved,
           source: "portfolio",
-          confidence: 0.7, // published on their own page, but role/identity match is fuzzier
-          verified: true,
-          verifyMethod: "published",
+          // A regex-scraped address is literally on the page (trusted); an
+          // LLM-inferred one is a softer signal, so score it lower and don't
+          // claim it as verified/published.
+          confidence: viaLlm ? 0.55 : 0.7,
+          verified: !viaLlm,
+          verifyMethod: viaLlm ? "llm" : "published",
         });
       }
     }

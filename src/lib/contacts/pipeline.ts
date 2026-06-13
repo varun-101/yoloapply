@@ -201,11 +201,33 @@ async function runEnrich(domain: string, input: EnrichInput): Promise<void> {
       nameOnly.push(c);
     }
     const toResolve = nameOnly.slice(0, MAX_PATTERN_PEOPLE);
+    const normName = (n?: string | null) => (n ?? "").toLowerCase().replace(/[^a-z]/g, "");
 
-    // Pattern-guess a single best address per unresolved person (only if the
-    // domain can receive mail). Confidence comes from the pattern likelihood.
+    // Portfolio lane FIRST: it finds REAL published personal emails, which beat a
+    // pattern guess, so we run it before falling back to guessing. Gated on the
+    // user's Serper key. Caps people internally.
+    let portfolioError: string | undefined;
+    if (searchKey && toResolve.length) {
+      const portfolio = await fetchPortfolioContacts(
+        toResolve.map((p) => ({ name: p.name!, title: p.title, linkedinUrl: p.linkedinUrl })),
+        company,
+        domain,
+        searchKey,
+        llm ?? undefined
+      );
+      all = all.concat(portfolio.candidates);
+      portfolioError = portfolio.error;
+    }
+    const portfolioResolved = new Set(
+      all.filter((c) => c.source === "portfolio" && c.name).map((c) => normName(c.name))
+    );
+
+    // Pattern-guess a single best address ONLY for people the portfolio lane
+    // didn't resolve (avoids a redundant guess + portfolio pair for the same
+    // person), and only if the domain can receive mail.
     if (toResolve.length && (await hasMx(domain))) {
       for (const person of toResolve) {
+        if (portfolioResolved.has(normName(person.name))) continue;
         const guess = guessEmails(person.name, domain, pattern, 1)[0];
         if (!guess) continue;
         all.push({
@@ -219,20 +241,6 @@ async function runEnrich(domain: string, input: EnrichInput): Promise<void> {
           verifyMethod: "pattern",
         });
       }
-    }
-
-    // Portfolio lane: search each still-unresolved person for a published email.
-    let portfolioError: string | undefined;
-    if (searchKey && toResolve.length) {
-      const portfolio = await fetchPortfolioContacts(
-        toResolve.map((p) => ({ name: p.name!, title: p.title, linkedinUrl: p.linkedinUrl })),
-        company,
-        domain,
-        searchKey,
-        llm ?? undefined
-      );
-      all = all.concat(portfolio.candidates);
-      portfolioError = portfolio.error;
     }
 
     const ranked = mergeAndRank(all);

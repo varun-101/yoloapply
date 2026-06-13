@@ -30,6 +30,9 @@ export const SOURCE_TIER: Record<string, number> = {
   lever: 2,
   ashby: 2,
   hn: 3,
+  weworkremotely: 3,
+  remoteok: 3,
+  remotive: 3,
 };
 
 export const SOURCE_LABEL: Record<string, string> = {
@@ -39,6 +42,9 @@ export const SOURCE_LABEL: Record<string, string> = {
   lever: "Lever",
   ashby: "Ashby",
   hn: "HN Who's Hiring",
+  weworkremotely: "WeWorkRemotely",
+  remoteok: "RemoteOK",
+  remotive: "Remotive",
 };
 
 export function sourceTier(source: string): number {

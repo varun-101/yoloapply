@@ -22,7 +22,7 @@ export interface RawCandidate {
   source: ContactSource;
   confidence: number; // 0..1, lane's own confidence in the EMAIL (0 when no email)
   verified?: boolean; // address confirmed real (published / provider-verified)
-  verifyMethod?: "published" | "apollo" | "mx" | "pattern";
+  verifyMethod?: "published" | "apollo" | "mx" | "pattern" | "llm";
 }
 
 export interface LaneResult {
