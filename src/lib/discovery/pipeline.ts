@@ -28,6 +28,36 @@ const TRACKING_PARAMS = new Set([
   "lipi",
 ]);
 
+// Content fingerprint for cross-repost dedupe. The same posting routinely
+// reappears days later under a NEW external id (a board re-listing it) or via a
+// DIFFERENT board (so a different URL) — neither (source, externalId) nor
+// canonicalUrl catches those. Normalizing company+role collapses the repeats
+// into a single catalog row, so a posting the user already saw/dismissed/applied
+// to doesn't resurface as "new".
+function normalizeForKey(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+export function dedupeFingerprint(company: string, role: string): string | null {
+  const c = normalizeForKey(company);
+  const r = normalizeForKey(role);
+  // Without BOTH halves the key is too weak to safely merge distinct postings.
+  if (!c || !r) return null;
+  return `${c}|${r}`;
+}
+
+// Same-fingerprint postings only merge when they're close in time. A role
+// re-opened weeks later is a genuine new posting (a fresh hiring cycle), not a
+// repost, so a gap beyond this window lets the two coexist. Measured on the
+// posting date when known, else the date we found it. (The URL-exact layer is
+// unconditional — an identical URL is always the same posting.)
+export const REPOST_WINDOW_MS = 15 * 24 * 60 * 60 * 1000;
+
 export function canonicalizeUrl(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
   try {
@@ -210,25 +240,100 @@ type CatalogRow = {
   id: string;
   source: string;
   externalId: string;
+  company: string;
+  role: string;
   canonicalUrl: string | null;
   sources: string | null;
   jdText: string | null;
+  postedAt: Date | null;
+  createdAt: Date;
 };
 
-// Upserts fetched postings into the global JobLead catalog: dedupe by
-// (source, externalId), cross-source-merge by canonical URL, enrich a JD-less
-// row when a later source carries the description. Runs once per fetch.
+const CATALOG_ROW_SELECT = {
+  id: true,
+  source: true,
+  externalId: true,
+  company: true,
+  role: true,
+  canonicalUrl: true,
+  sources: true,
+  jdText: true,
+  postedAt: true,
+  createdAt: true,
+} as const;
+
+// Among catalog rows sharing a fingerprint, pick the one to merge an incoming
+// lead into: only rows within the repost window are eligible; among those,
+// prefer one already carrying a JD, then the closest in time.
+function pickFingerprintTwin(
+  rows: CatalogRow[] | undefined,
+  leadDate: Date
+): CatalogRow | undefined {
+  if (!rows) return undefined;
+  const t = leadDate.getTime();
+  let best: CatalogRow | undefined;
+  let bestGap = Infinity;
+  for (const r of rows) {
+    const gap = Math.abs((r.postedAt ?? r.createdAt).getTime() - t);
+    if (gap > REPOST_WINDOW_MS) continue;
+    const better =
+      !best || (!!r.jdText && !best.jdText) || (!!r.jdText === !!best.jdText && gap < bestGap);
+    if (better) {
+      best = r;
+      bestGap = gap;
+    }
+  }
+  return best;
+}
+
+// Merge a re-found posting into the catalog row we already hold: append its
+// source label (if new) and backfill a missing JD from it. Mutates `target` so
+// later leads in the same fetch see the merged state.
+async function recordExtraSource(target: CatalogRow, lead: RawLead): Promise<void> {
+  const sources = target.sources ?? target.source;
+  const data: Prisma.JobLeadUpdateInput = {};
+  if (!sources.split(",").includes(lead.source)) {
+    const merged = `${sources},${lead.source}`;
+    data.sources = merged;
+    target.sources = merged;
+  }
+  if (!target.jdText && lead.jdText) {
+    data.jdText = lead.jdText;
+    target.jdText = lead.jdText;
+  }
+  if (Object.keys(data).length > 0) {
+    await prisma.jobLead.update({ where: { id: target.id }, data });
+  }
+}
+
+// Upserts fetched postings into the global JobLead catalog. Dedupe layers, in
+// order: (source, externalId) exact match → canonical URL → company+role
+// fingerprint within the repost window (catches reposts under a new id/board,
+// while letting a role re-opened weeks later coexist as a fresh posting). Each
+// match enriches a JD-less row and records the extra source instead of creating
+// a duplicate. Runs once per fetch.
 async function ingestCatalog(
   results: FetchResult[]
 ): Promise<{ stats: SourceStats[]; created: number }> {
-  const existing = await prisma.jobLead.findMany({
-    select: { id: true, source: true, externalId: true, canonicalUrl: true, sources: true, jdText: true },
-  });
+  const now = new Date(); // fall-back "found" date for leads without a postedAt
+  const existing = await prisma.jobLead.findMany({ select: CATALOG_ROW_SELECT });
   const bySourceId = new Map<string, CatalogRow>();
   const byCanonical = new Map<string, CatalogRow>();
+  // A fingerprint can map to several rows now (separate hiring cycles), so the
+  // value is a list — the date window picks which one (if any) an incoming lead
+  // belongs to.
+  const byFingerprint = new Map<string, CatalogRow[]>();
+  const addFingerprint = (l: CatalogRow) => {
+    const fp = dedupeFingerprint(l.company, l.role);
+    if (!fp) return;
+    const list = byFingerprint.get(fp);
+    if (list) list.push(l);
+    else byFingerprint.set(fp, [l]);
+  };
   for (const l of existing) {
     bySourceId.set(`${l.source}::${l.externalId}`, l);
     if (l.canonicalUrl) byCanonical.set(l.canonicalUrl, l);
+    addFingerprint(l);
   }
 
   const stats: SourceStats[] = [];
@@ -258,20 +363,18 @@ async function ingestCatalog(
       }
 
       const canonical = canonicalizeUrl(lead.url);
-      const cross = canonical ? byCanonical.get(canonical) : undefined;
-      if (cross) {
-        // Same posting found via another source — record the extra source label.
-        const sources = cross.sources ?? cross.source;
-        if (!sources.split(",").includes(lead.source)) {
-          const merged = `${sources},${lead.source}`;
-          await prisma.jobLead.update({
-            where: { id: cross.id },
-            data: { sources: merged, jdText: cross.jdText ?? lead.jdText ?? null },
-          });
-          cross.sources = merged;
-          if (!cross.jdText && lead.jdText) cross.jdText = lead.jdText;
-        }
-        bySourceId.set(sourceKey, cross);
+      const fp = dedupeFingerprint(lead.company, lead.role);
+
+      // Same posting found via another source (same URL) OR reappearing under a
+      // new id/board within the repost window (same company+role): merge, don't
+      // create a second row.
+      const twin =
+        (canonical ? byCanonical.get(canonical) : undefined) ??
+        (fp ? pickFingerprintTwin(byFingerprint.get(fp), lead.postedAt ?? now) : undefined);
+      if (twin) {
+        await recordExtraSource(twin, lead);
+        bySourceId.set(sourceKey, twin);
+        if (canonical && !byCanonical.has(canonical)) byCanonical.set(canonical, twin);
         s.duplicates++;
         continue;
       }
@@ -295,7 +398,7 @@ async function ingestCatalog(
             contactEmail: lead.contactEmail ?? null,
             postedAt: lead.postedAt ?? null,
           },
-          select: { id: true, source: true, externalId: true, canonicalUrl: true, sources: true, jdText: true },
+          select: CATALOG_ROW_SELECT,
         });
       } catch (e: unknown) {
         // Another fetch in flight can insert the same posting between our snapshot
@@ -308,6 +411,7 @@ async function ingestCatalog(
       }
       bySourceId.set(sourceKey, row);
       if (canonical) byCanonical.set(canonical, row);
+      addFingerprint(row);
       s.created++;
       createdTotal++;
     }

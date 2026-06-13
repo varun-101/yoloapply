@@ -6,9 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDate, statusColor } from "@/lib/utils";
-import { Download, ExternalLink, FileText, Mail, FileSignature } from "lucide-react";
+import { Download, FileText, Mail, FileSignature } from "lucide-react";
 import ApplicationActions from "./actions";
 import QuestionAnswerer from "./question-answerer";
+import JobDescriptionEditor from "./jd-editor";
 
 export const dynamic = "force-dynamic";
 
@@ -75,28 +76,7 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Job description</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {app.jdUrl && (
-                <a
-                  href={app.jdUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={app.jdUrl}
-                  className="flex max-w-full items-center gap-1 text-sm text-indigo-600 dark:text-indigo-400 hover:underline mb-2"
-                >
-                  <span className="min-w-0 truncate">{app.jdUrl}</span>
-                  <ExternalLink className="h-3 w-3 shrink-0" />
-                </a>
-              )}
-              <div className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-300 max-h-96 overflow-auto rounded border border-slate-100 dark:border-slate-800 p-3 bg-slate-50 dark:bg-slate-950">
-                {app.jdText ?? <span className="text-slate-400 dark:text-slate-500">No JD text saved.</span>}
-              </div>
-            </CardContent>
-          </Card>
+          <JobDescriptionEditor id={app.id} jdUrl={app.jdUrl} jdText={app.jdText} />
 
           <ApplicationActions
             id={app.id}
