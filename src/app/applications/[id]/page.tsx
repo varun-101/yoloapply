@@ -10,6 +10,7 @@ import { Download, FileText, Mail, FileSignature } from "lucide-react";
 import ApplicationActions from "./actions";
 import QuestionAnswerer from "./question-answerer";
 import JobDescriptionEditor from "./jd-editor";
+import FindContacts from "./find-contacts";
 
 export const dynamic = "force-dynamic";
 
@@ -188,6 +189,8 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
               )}
             </CardContent>
           </Card>
+
+          <FindContacts applicationId={app.id} company={app.company} role={app.role} />
 
           <Card>
             <CardHeader>

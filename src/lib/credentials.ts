@@ -55,6 +55,18 @@ export async function getLlmConfigOrNull(userId: string): Promise<LlmConfig | nu
   return getActiveSharedLlmConfig();
 }
 
+// Contact-finder lane keys (cold-email enrichment). Both optional — the free
+// lanes (site scrape, GitHub, role inboxes, pattern+MX) run without either.
+export async function getApolloKey(userId: string): Promise<string | null> {
+  const cred = await prisma.userCredential.findUnique({ where: { userId } });
+  return cred?.apolloKeyEnc ? decryptSecret(cred.apolloKeyEnc) : null;
+}
+
+export async function getSearchKey(userId: string): Promise<string | null> {
+  const cred = await prisma.userCredential.findUnique({ where: { userId } });
+  return cred?.searchKeyEnc ? decryptSecret(cred.searchKeyEnc) : null;
+}
+
 export interface SmtpConfig {
   host: string;
   port: number;
@@ -85,6 +97,8 @@ export interface CredentialUpdate {
   deepseekKey?: string | null; // undefined = leave, null = clear, string = set
   llmProvider?: string | null;
   llmModel?: string | null;
+  apolloKey?: string | null;
+  searchKey?: string | null;
   smtpHost?: string | null;
   smtpPort?: number | null;
   smtpUser?: string | null;
@@ -102,6 +116,12 @@ export async function setCredentials(userId: string, update: CredentialUpdate) {
   }
   if (update.llmModel !== undefined) {
     data.llmModel = update.llmModel || null;
+  }
+  if (update.apolloKey !== undefined) {
+    data.apolloKeyEnc = update.apolloKey ? encryptSecret(update.apolloKey) : null;
+  }
+  if (update.searchKey !== undefined) {
+    data.searchKeyEnc = update.searchKey ? encryptSecret(update.searchKey) : null;
   }
   if (update.smtpPass !== undefined) {
     data.smtpPassEnc = update.smtpPass ? encryptSecret(update.smtpPass) : null;

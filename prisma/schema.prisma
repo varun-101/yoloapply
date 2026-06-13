@@ -112,6 +112,9 @@ model UserCredential {
   deepseekKeyEnc String? // stores the API key for whichever provider is selected
   llmProvider    String  @default("deepseek") // "deepseek" | "openrouter" | "gemini" | "openai"
   llmModel       String? // optional model override; falls back to provider default
+  // Contact-finder lanes (cold-email enrichment), BYO + encrypted like the LLM key:
+  apolloKeyEnc   String? // Apollo.io API key — "people at company by title" people-DB lane
+  searchKeyEnc   String? // Serper.dev (Google search) API key — portfolio/personal-site lane
   smtpHost       String?
   smtpPort       Int?
   smtpUser       String? // an email address — not secret
@@ -185,7 +188,11 @@ model Contact {
   company       String
   email         String?
   linkedinUrl   String?
-  source        String? // "manual" | "scrape" | "cold_email_target"
+  source        String? // "manual" | "scrape" | "cold_email_target" | "discovered"
+  domain        String? // company domain this contact was discovered under
+  confidence    Float? // 0..1 — finder's confidence the email is right (null for manual)
+  verified      Boolean      @default(false) // email confirmed real (published address or provider-verified)
+  verifyMethod  String? // "published" | "apollo" | "mx" | "pattern"
   notes         String?
   createdAt     DateTime     @default(now())
   applicationId String?
@@ -331,6 +338,51 @@ model AtsCompany {
 
   @@unique([ats, slug])
   @@index([active])
+}
+
+// Global, domain-keyed contact-enrichment cache. Like the JobLead catalog, each
+// company is enriched ONCE and the result is shared across every user: founder/HR
+// email discovery burns small free API tiers (Apollo/Serper) and rate-limited
+// public endpoints (GitHub), so re-running per user would be wasteful. The status
+// field is the DB-backed source of truth for the "Find contacts" task lifecycle —
+// it survives a tab close and lets the UI restore an in-flight run on reload.
+model CompanyContactCache {
+  id          String              @id @default(cuid())
+  domain      String              @unique // normalized registrable domain, e.g. "acme.com"
+  company     String? // display name from the lead that triggered enrichment
+  status      String              @default("idle") // idle | running | completed | failed
+  pattern     String? // inferred email pattern, e.g. "{first}.{last}"
+  sourceStats String? // JSON: per-lane found counts + errors
+  error       String?
+  startedAt   DateTime?
+  enrichedAt  DateTime? // last successful completion (drives the freshness TTL)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  contacts    DiscoveredContact[]
+}
+
+// One discovered person/email for a company (global, deduped by email per domain).
+// Ranked candidates surface in the "Find contacts" UI; clicking one prefills the
+// cold-email draft, and sending it materializes a per-user Contact (send route).
+model DiscoveredContact {
+  id      String              @id @default(cuid())
+  cacheId String
+  cache   CompanyContactCache @relation(fields: [cacheId], references: [id], onDelete: Cascade)
+
+  name          String?
+  title         String?
+  email         String? // null = person located but address unresolved
+  linkedinUrl   String?
+  source        String // "lead" | "apollo" | "site" | "github" | "hn" | "portfolio" | "role_inbox" | "pattern"
+  sources       String? // comma-separated when multiple lanes agreed on the same email
+  confidence    Float   @default(0) // 0..1
+  verified      Boolean @default(false)
+  verifyMethod  String? // "published" | "apollo" | "mx" | "pattern"
+  seniorityRank Int     @default(0) // higher = more senior/relevant (founder > lead > recruiter > IC)
+  rank          Float   @default(0) // composite sort score (seniority × confidence × verified)
+  createdAt     DateTime @default(now())
+
+  @@index([cacheId])
 }
 
 // Singleton row (id=1) — admin sets a shared DeepSeek key with an expiry.

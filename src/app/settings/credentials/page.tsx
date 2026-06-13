@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Check, Copy, KeyRound, Loader2, Mail, Plug, Save, Trash2 } from "lucide-react";
+import { Check, Copy, KeyRound, Loader2, Mail, Plug, Save, Trash2, Users } from "lucide-react";
 import { PROVIDER_CONFIGS, DEFAULT_PROVIDER } from "@/lib/providers";
 
 interface CredStatus {
@@ -12,6 +12,10 @@ interface CredStatus {
   deepseekLast4: string | null;
   llmProvider: string;
   llmModel: string | null;
+  apolloKeySet: boolean;
+  apolloLast4: string | null;
+  searchKeySet: boolean;
+  searchLast4: string | null;
   smtpHost: string | null;
   smtpPort: number | null;
   smtpUser: string | null;
@@ -49,6 +53,8 @@ export default function CredentialsSettings() {
   const [llmProvider, setLlmProvider] = useState(DEFAULT_PROVIDER);
   const [llmModel, setLlmModel] = useState("");
   const [deepseekKey, setDeepseekKey] = useState("");
+  const [apolloKey, setApolloKey] = useState("");
+  const [searchKey, setSearchKey] = useState("");
   const [smtpHost, setSmtpHost] = useState("smtp.gmail.com");
   const [smtpPort, setSmtpPort] = useState("587");
   const [smtpUser, setSmtpUser] = useState("");
@@ -270,6 +276,113 @@ export default function CredentialsSettings() {
                 disabled={busy !== null}
               >
                 <Trash2 className="h-4 w-4" /> Remove key
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-4 w-4" /> Contact finder (cold-email enrichment)
+          </CardTitle>
+          {status.apolloKeySet || status.searchKeySet ? (
+            <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
+              {[status.apolloKeySet && "Apollo", status.searchKeySet && "Search"].filter(Boolean).join(" + ")} active
+            </Badge>
+          ) : (
+            <Badge className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">free lanes only</Badge>
+          )}
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Both optional. The &ldquo;Find contacts&rdquo; button on an application always runs the free
+            lanes (company-site scrape, GitHub, role inboxes, email-pattern guessing). These keys add two
+            stronger lanes, billed to your own account and stored encrypted.
+          </p>
+          <Field
+            label="Apollo API key"
+            hint={
+              status.apolloKeySet
+                ? "Saved — enter a new key to replace. People-at-company lane (founders/HR by title)."
+                : "People-DB lane: lists who works there by title + returns verified emails. apolloapp.io → Settings → API."
+            }
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                type="password"
+                value={apolloKey}
+                onChange={(e) => setApolloKey(e.target.value)}
+                placeholder={status.apolloKeySet ? "enter a new key to replace" : "Apollo API key…"}
+                autoComplete="off"
+              />
+              {status.apolloKeySet && (
+                <Badge className="shrink-0 gap-1 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
+                  <Check className="h-3 w-3" /> saved{status.apolloLast4 && <span className="font-mono">…{status.apolloLast4}</span>}
+                </Badge>
+              )}
+            </div>
+          </Field>
+          <Field
+            label="Serper.dev search API key"
+            hint={
+              status.searchKeySet
+                ? "Saved — enter a new key to replace. Portfolio/personal-site email lane."
+                : "Portfolio lane: Google-searches each person for their personal site/GitHub and extracts a public email. serper.dev."
+            }
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                type="password"
+                value={searchKey}
+                onChange={(e) => setSearchKey(e.target.value)}
+                placeholder={status.searchKeySet ? "enter a new key to replace" : "Serper API key…"}
+                autoComplete="off"
+              />
+              {status.searchKeySet && (
+                <Badge className="shrink-0 gap-1 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
+                  <Check className="h-3 w-3" /> saved{status.searchLast4 && <span className="font-mono">…{status.searchLast4}</span>}
+                </Badge>
+              )}
+            </div>
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() =>
+                put(
+                  {
+                    apolloKey: apolloKey || undefined,
+                    searchKey: searchKey || undefined,
+                  },
+                  "finder",
+                  "Contact-finder keys saved."
+                ).then(() => {
+                  setApolloKey("");
+                  setSearchKey("");
+                })
+              }
+              disabled={busy !== null || (!apolloKey.trim() && !searchKey.trim())}
+            >
+              {busy === "finder" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save
+            </Button>
+            {status.apolloKeySet && (
+              <Button
+                variant="outline"
+                onClick={() => put({ apolloKey: null }, "finder", "Apollo key removed.")}
+                disabled={busy !== null}
+              >
+                <Trash2 className="h-4 w-4" /> Remove Apollo
+              </Button>
+            )}
+            {status.searchKeySet && (
+              <Button
+                variant="outline"
+                onClick={() => put({ searchKey: null }, "finder", "Search key removed.")}
+                disabled={busy !== null}
+              >
+                <Trash2 className="h-4 w-4" /> Remove Search
               </Button>
             )}
           </div>

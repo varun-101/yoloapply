@@ -10,8 +10,8 @@ import { Loader2, Send, Wand2 } from "lucide-react";
 function ColdEmailInner() {
   const sp = useSearchParams();
   const [company, setCompany] = useState(sp.get("company") ?? "");
-  const [recipientName, setRecipientName] = useState("");
-  const [recipientTitle, setRecipientTitle] = useState("");
+  const [recipientName, setRecipientName] = useState(sp.get("name") ?? "");
+  const [recipientTitle, setRecipientTitle] = useState(sp.get("title") ?? "");
   const [recipientEmail, setRecipientEmail] = useState(sp.get("email") ?? "");
   const [role, setRole] = useState(sp.get("role") ?? "");
   const [hookContext, setHookContext] = useState("");

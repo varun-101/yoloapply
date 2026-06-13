@@ -12,14 +12,26 @@ export async function GET(req: NextRequest) {
   try {
     const user = await requireUser(req);
     const cred = await prisma.userCredential.findUnique({ where: { userId: user.id } });
-    const deepseekLast4 = cred?.deepseekKeyEnc
-      ? decryptSecret(cred.deepseekKeyEnc).slice(-4)
-      : null;
+    // Decrypt only to expose the last-4 hint (never the key itself). Guard each
+    // so a single undecryptable secret can't 500 the whole settings page.
+    const last4 = (enc: string | null | undefined): string | null => {
+      if (!enc) return null;
+      try {
+        return decryptSecret(enc).slice(-4);
+      } catch {
+        return null;
+      }
+    };
+    const deepseekLast4 = last4(cred?.deepseekKeyEnc);
     return NextResponse.json({
       deepseekKeySet: !!cred?.deepseekKeyEnc,
       deepseekLast4,
       llmProvider: cred?.llmProvider ?? "deepseek",
       llmModel: cred?.llmModel ?? null,
+      apolloKeySet: !!cred?.apolloKeyEnc,
+      apolloLast4: last4(cred?.apolloKeyEnc),
+      searchKeySet: !!cred?.searchKeyEnc,
+      searchLast4: last4(cred?.searchKeyEnc),
       smtpHost: cred?.smtpHost ?? null,
       smtpPort: cred?.smtpPort ?? null,
       smtpUser: cred?.smtpUser ?? null,
@@ -36,6 +48,8 @@ interface CredentialsBody {
   deepseekKey?: string | null;
   llmProvider?: string | null;
   llmModel?: string | null;
+  apolloKey?: string | null;
+  searchKey?: string | null;
   smtpHost?: string | null;
   smtpPort?: number | null;
   smtpUser?: string | null;
@@ -51,6 +65,8 @@ export async function PUT(req: NextRequest) {
       deepseekKey: body.deepseekKey,
       llmProvider: body.llmProvider,
       llmModel: body.llmModel,
+      apolloKey: body.apolloKey,
+      searchKey: body.searchKey,
       smtpHost: body.smtpHost,
       smtpPort: body.smtpPort,
       smtpUser: body.smtpUser,
