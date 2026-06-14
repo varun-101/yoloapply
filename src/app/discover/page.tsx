@@ -1,11 +1,11 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SOURCE_LABEL } from "@/lib/discovery/types";
-import { CheckCircle2, ExternalLink, FileSearch, Gauge, History, Loader2, Mail, RadarIcon, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileSearch, Gauge, History, Loader2, Mail, RadarIcon, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
 
 interface Lead {
   id: string;
@@ -154,6 +154,9 @@ export default function DiscoverPage() {
   // Separate window on when a scan discovered the posting (catalog createdAt).
   const [scannedDays, setScannedDays] = useState("");
   const [sort, setSort] = useState("trust");
+  // Free-text search across the loaded catalog (client-side, instant). Matches
+  // every common field so a query like "react remote" or a founder's email lands.
+  const [query, setQuery] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
@@ -431,6 +434,55 @@ export default function DiscoverPage() {
     }
   }
 
+  // Each space-separated term must match somewhere in the row (AND), so
+  // "react remote" narrows progressively. Sources are matched on both the raw
+  // key and the human label. When a query is active we re-rank so the strongest
+  // matches (company/role) float above rows that only mention the term deep in
+  // their JD text — the existing sort acts as a stable tiebreak.
+  const filteredLeads = useMemo(() => {
+    if (leads === null) return null;
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return leads;
+
+    // Higher weight = more relevant place for a match to land.
+    const fields = (lead: Lead): { text: string; weight: number }[] => {
+      const sourceKeys = (lead.sources ?? lead.source).split(",");
+      return [
+        { text: lead.company, weight: 100 },
+        { text: lead.role, weight: 60 },
+        { text: lead.skills ?? "", weight: 25 },
+        { text: lead.location ?? "", weight: 20 },
+        { text: lead.contactEmail ?? "", weight: 20 },
+        { text: [...sourceKeys, ...sourceKeys.map(sourceLabel)].join(" "), weight: 15 },
+        { text: lead.salary ?? "", weight: 10 },
+        { text: lead.jobType ?? "", weight: 10 },
+        { text: lead.experience ?? "", weight: 10 },
+        { text: lead.scoreReason ?? "", weight: 5 },
+        { text: lead.jdText ?? "", weight: 1 },
+      ].map((f) => ({ text: f.text.toLowerCase(), weight: f.weight }));
+    };
+
+    // A lead matches only if EVERY term appears in some field; its relevance is
+    // the sum over terms of the best (highest-weight) field that term hit.
+    const ranked = leads
+      .map((lead, i) => {
+        const fs = fields(lead);
+        let relevance = 0;
+        for (const t of terms) {
+          let best = 0;
+          for (const f of fs) if (f.text.includes(t)) best = Math.max(best, f.weight);
+          if (best === 0) return null; // this term matched nothing → drop the lead
+          relevance += best;
+        }
+        return { lead, relevance, i };
+      })
+      .filter((r): r is { lead: Lead; relevance: number; i: number } => r !== null);
+
+    // Sort by relevance desc, preserving the incoming order within equal scores.
+    ranked.sort((a, b) => b.relevance - a.relevance || a.i - b.i);
+    return ranked.map((r) => r.lead);
+  }, [leads, query]);
+
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto">
       <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
@@ -571,6 +623,27 @@ export default function DiscoverPage() {
         </div>
       )}
 
+      <div className="relative mb-3 max-w-md">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search company, role, location, skills, JD…"
+          className="h-9 w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 pl-9 pr-9 text-sm text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-signal/70"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery("")}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+            aria-label="Clear search"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
       <div className="flex flex-wrap gap-2 mb-4">
         <select className={SELECT_CLS} value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="new">New</option>
@@ -621,20 +694,29 @@ export default function DiscoverPage() {
         </select>
       </div>
 
-      {leads === null ? (
+      {filteredLeads === null ? (
         <div className="p-12 text-center text-slate-400 dark:text-slate-500">
           <Loader2 className="h-5 w-5 animate-spin inline" />
         </div>
-      ) : leads.length === 0 ? (
+      ) : filteredLeads.length === 0 ? (
         <Card>
           <CardContent className="p-10 text-center text-sm text-slate-500 dark:text-slate-400">
-            No leads match these filters. Hit <span className="font-medium">Scan now</span> to pull
-            fresh postings.
+            {query ? (
+              <>
+                No leads match <span className="font-medium">“{query}”</span>. Try a different search
+                or clear it.
+              </>
+            ) : (
+              <>
+                No leads match these filters. Hit <span className="font-medium">Scan now</span> to
+                pull fresh postings.
+              </>
+            )}
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-2">
-          {leads.map((lead) => (
+          {filteredLeads.map((lead) => (
             <Card key={lead.id}>
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-4">

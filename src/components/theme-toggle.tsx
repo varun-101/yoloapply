@@ -4,8 +4,8 @@ import { Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // The inline script in layout.tsx applies the saved theme before first paint;
-// this component just reflects and flips it. It always sits on the dark rail,
-// so its colors don't vary by theme.
+// this component just reflects and flips it. It sits on the rail, which now
+// follows the theme, so its colors carry light + dark variants.
 export function ThemeToggle({ compact = false }: { compact?: boolean }) {
   const [dark, setDark] = useState<boolean | null>(null);
 
@@ -32,7 +32,7 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
       <button
         onClick={toggle}
         title="Switch theme"
-        className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-white/[0.06] hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70"
+        className="grid h-7 w-7 place-items-center rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/[0.06] dark:hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70"
       >
         {icon}
       </button>
@@ -43,8 +43,8 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
     <button
       onClick={toggle}
       className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-slate-400",
-        "hover:bg-white/[0.06] hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70"
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-slate-600 dark:text-slate-400",
+        "hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-white/[0.06] dark:hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70"
       )}
       title="Switch theme"
     >

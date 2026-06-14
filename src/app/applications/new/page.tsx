@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Textarea } from "@/components/ui/input";
@@ -24,6 +24,18 @@ export default function NewApplication() {
   const [err, setErr] = useState<string | null>(null);
   const [extract, setExtract] = useState<ExtractStatus>({ kind: "idle" });
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Prefill from query params, e.g. the Funding Radar "Cold email" deep link
+  // (?company=…&source=cold_email). Read on mount to avoid a Suspense boundary.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const c = p.get("company");
+    const r = p.get("role");
+    const s = p.get("source");
+    if (c) setCompany(c);
+    if (r) setRole(r);
+    if (s === "cold_email" || s === "manual" || s === "linkedin" || s === "portal") setSource(s);
+  }, []);
 
   function applyExtracted(data: {
     company?: string;

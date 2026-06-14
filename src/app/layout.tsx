@@ -43,10 +43,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               Gated on the server-resolved user so it doesn't pop in. */}
           {user && (
           <>
-          {/* The rail stays night-dark in both themes — the agent works the
-              night shift even when the workspace is in daylight. */}
-          <aside className="hidden md:flex w-60 shrink-0 flex-col sticky top-0 h-screen bg-slate-950 border-r border-slate-800 dark:border-slate-900">
-            <div className="px-5 pt-5 pb-4 border-b border-white/10">
+          {/* The rail follows the theme: light surface in daylight, night-dark
+              when the workspace is dark. */}
+          <aside className="hidden md:flex w-60 shrink-0 flex-col sticky top-0 h-screen bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-900">
+            <div className="px-5 pt-5 pb-4 border-b border-slate-200 dark:border-white/10">
               <Link
                 href="/"
                 className="group flex items-center gap-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70 rounded-md"
@@ -55,7 +55,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   Y
                 </div>
                 <div>
-                  <div className="font-display text-[15px] font-semibold tracking-tight text-white">
+                  <div className="font-display text-[15px] font-semibold tracking-tight text-slate-900 dark:text-white">
                     YOLOapply
                   </div>
                   <div className="font-mono text-[10px] text-slate-500">night-shift job agent</div>
@@ -65,13 +65,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
             <RailNav isAdmin={isAdmin} />
 
-            <div className="border-t border-white/10 p-4 space-y-3">
+            <div className="border-t border-slate-200 dark:border-white/10 p-4 space-y-3">
               <div className="flex items-center gap-2">
                 <span className="relative flex h-2 w-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal opacity-60" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-signal" />
                 </span>
-                <span className="text-xs font-medium text-slate-200">Agent on watch</span>
+                <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Agent on watch</span>
               </div>
               <p className="font-mono text-[10px] leading-relaxed text-slate-500">
                 sweeps the boards every 3h
@@ -88,7 +88,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   )}
                 </div>
                 <SignOutButton redirectUrl="/sign-in">
-                  <button className="flex items-center gap-2 rounded-md px-1 py-1 text-xs text-slate-400 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70">
+                  <button className="flex items-center gap-2 rounded-md px-1 py-1 text-xs text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70">
                     <LogOut className="h-3.5 w-3.5" />
                     Sign out
                   </button>
@@ -99,13 +99,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </aside>
 
           {/* Small screens: the rail folds into a top strip. */}
-          <header className="md:hidden sticky top-0 z-40 bg-slate-950 border-b border-slate-800">
+          <header className="md:hidden sticky top-0 z-40 bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
             <div className="flex items-center justify-between px-4 pt-3 pb-1">
               <Link href="/" className="flex items-center gap-2">
                 <div className="grid h-6 w-6 place-items-center rounded-md bg-signal font-display text-xs font-bold text-slate-950">
                   Y
                 </div>
-                <span className="font-display text-sm font-semibold text-white">YOLOapply</span>
+                <span className="font-display text-sm font-semibold text-slate-900 dark:text-white">YOLOapply</span>
               </Link>
               <div className="flex items-center gap-3">
                 <SignedIn>

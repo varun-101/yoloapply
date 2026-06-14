@@ -10,6 +10,7 @@ import {
   Radar,
   Settings,
   Shield,
+  TrendingUp,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -34,6 +35,7 @@ const SECTIONS: Section[] = [
     items: [
       { href: "/", icon: LayoutDashboard, label: "Dashboard" },
       { href: "/discover", icon: Radar, label: "Discover" },
+      { href: "/funding", icon: TrendingUp, label: "Funding" },
     ],
   },
   {
@@ -104,8 +106,8 @@ export function RailNav({ isAdmin = false }: { isAdmin?: boolean }) {
                     "relative flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70",
                     isActive
-                      ? "bg-white/[0.06] text-signal"
-                      : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-100"
+                      ? "bg-slate-100 text-signal dark:bg-white/[0.06]"
+                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/[0.04] dark:hover:text-slate-100"
                   )}
                 >
                   {isActive && (
@@ -141,8 +143,8 @@ export function MobileNav({ isAdmin = false }: { isAdmin?: boolean }) {
               "flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs whitespace-nowrap transition-colors",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal/70",
               isActive
-                ? "bg-white/[0.06] text-signal"
-                : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-100"
+                ? "bg-slate-100 text-signal dark:bg-white/[0.06]"
+                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/[0.04] dark:hover:text-slate-100"
             )}
           >
             <Icon className="h-3.5 w-3.5" />

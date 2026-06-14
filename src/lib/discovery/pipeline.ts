@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { fetchAtsLeads } from "./ats";
+import { runFundingScan } from "./funding";
 import { fetchHnLeads } from "./hn";
 import { fetchJobfoundLeads } from "./jobfound";
 import { fetchRemoteOkLeads } from "./remoteok";
@@ -220,6 +221,11 @@ async function doGlobalFetch(
       tick(fetchWeWorkRemotelyLeads(prefsList)),
       tick(fetchRemoteOkLeads(prefsList)),
       tick(fetchRemotiveLeads(prefsList)),
+      // Funding radar runs alongside the lead sources but isn't one: it produces
+      // no JobLeads (so it's not ticked or ingested) — it refreshes the radar and
+      // folds any freshly-funded company's live board into the watchlist for the
+      // NEXT tick. Best-effort; a failure must not sink the catalog refresh.
+      runFundingScan().catch(() => null),
     ]);
     const results = [sheet, jobfound, ...ats, hn, wwr, remoteok, remotive];
 
