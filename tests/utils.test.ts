@@ -23,7 +23,7 @@ describe("formatDate", () => {
 
 describe("statusColor / statusBarColor", () => {
   it("returns a distinct class for each known status", () => {
-    for (const s of ["draft", "personalized", "applied", "interview", "offer", "rejected"]) {
+    for (const s of ["draft", "personalized", "applied", "replied", "interview", "offer", "rejected", "closed"]) {
       expect(statusColor(s)).toContain("dark:");
       expect(statusBarColor(s)).toContain("bg-");
     }
