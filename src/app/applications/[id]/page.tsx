@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDate, statusColor } from "@/lib/utils";
-import { Download, FileText, Mail, FileSignature } from "lucide-react";
+import { Download, FileText, Mail, FileSignature, MessageSquareText } from "lucide-react";
 import ApplicationActions from "./actions";
 import QuestionAnswerer from "./question-answerer";
 import JobDescriptionEditor from "./jd-editor";
@@ -51,6 +51,11 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link href={`/interview?app=${app.id}`}>
+              <MessageSquareText className="h-4 w-4" /> Practice interview
+            </Link>
+          </Button>
           {hasPdf && (
             <Button asChild variant="outline">
               <a href={`/api/applications/${app.id}/resume?format=pdf`} target="_blank" rel="noreferrer">

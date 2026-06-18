@@ -35,6 +35,7 @@ model User {
   userLeads    UserLead[]
   scanRuns     ScanRun[]
   files        StoredFile[]
+  interviewSessions InterviewSession[]
 }
 
 model UserProfile {
@@ -174,6 +175,7 @@ model Application {
   contacts          Contact[]
   emails            Email[]
   files             StoredFile[]
+  interviewSessions InterviewSession[]
 
   @@index([userId, status])
 }
@@ -403,4 +405,59 @@ model Event {
   type          String // "status_change" | "personalized" | "applied" | "email_sent" | "note"
   detail        String?
   createdAt     DateTime    @default(now())
+}
+
+// ── Interview coach ─────────────────────────────────────────────────────────
+
+// A mock-interview session. Browser-native voice (Web Speech API) is client-side
+// only, so the backend exchanges TEXT: it plans topics, drives the depth-first
+// cross-questioning (advanceTurn), grades each answer silently, and composes a
+// report at wrap-up. Long-running-ops rules apply (src/lib/interview/lock.ts:
+// per-session globalThis lock, DB-backed status for restore-on-reload).
+model InterviewSession {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // null = general/resume-based; set = company-specific, grounded in the app's JD.
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+
+  mode         String // "company" | "general"
+  persona      String  @default("neutral") // "neutral" | "friendly" | "stress"
+  roundType    String  @default("mixed") // "behavioral" | "technical" | "mixed"
+  // null = untimed (runs until topics exhaust). Else a TARGET length in minutes:
+  // topic count scales to it and the interviewer winds down to end ~around it.
+  timeLimitMin Int?
+  status       String  @default("running") // running | completed | failed | abandoned
+  topics       Json    @default("[]") // planned seeds: [{ title, kind, seed }]
+  currentTopic Int     @default(0)
+  report       Json? // composed at wrap-up from the hidden per-turn assessments
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  updatedAt    DateTime  @updatedAt
+  turns        InterviewTurn[]
+
+  @@index([userId, status])
+}
+
+// One interviewer line + the candidate's answer to it. `feedback` is the HIDDEN
+// per-turn rubric (relevance/specificity/correctness/communication + note) — it
+// drives the next move and the final report but is NEVER sent to the live UI,
+// so the conversation stays in-character.
+model InterviewTurn {
+  id        String           @id @default(cuid())
+  sessionId String
+  session   InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  index      Int // monotonic order within the session
+  topicIndex Int
+  depth      Int     @default(0) // how deep into this topic's thread
+  move       String // "SEED" | "DRILL" | "CHALLENGE" | "PIVOT" | "MOVE_ON"
+  question   String // interviewer line (shown + spoken)
+  answer     String? // candidate transcript (null until they respond)
+  feedback   Json? // hidden assessment of `answer`
+  createdAt  DateTime @default(now())
+
+  @@index([sessionId, index])
 }

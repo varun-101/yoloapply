@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>YOLOapply — Voice Interview Demo</title>
+<style>
+  :root {
+    --ink-950: #0b0f1a;
+    --ink-900: #11162400;
+    --ink-900s: #111624;
+    --ink-850: #161c2e;
+    --ink-800: #1c2438;
+    --ink-700: #2a3450;
+    --line: #2a3450;
+    --text: #e7ebf5;
+    --muted: #8a94ad;
+    --signal: #ffb224;
+    --signal-dim: #c98a1c;
+    --good: #34d399;
+    --bad: #f87171;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 70% -10%, #16203a 0%, var(--ink-950) 60%);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 80px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--signal); margin: 0 0 8px;
+  }
+  h1 { font-size: 28px; line-height: 1.1; margin: 0 0 6px; font-weight: 650; }
+  .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+
+  .card {
+    background: var(--ink-900s); border: 1px solid var(--line);
+    border-radius: 16px; padding: 18px; margin-bottom: 16px;
+  }
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  select, input[type="range"] {
+    background: var(--ink-800); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; font-family: var(--sans); font-size: 13px;
+  }
+  select { min-width: 200px; }
+
+  button {
+    font-family: var(--sans); font-size: 14px; font-weight: 600;
+    border-radius: 10px; padding: 11px 18px; cursor: pointer; border: 1px solid transparent;
+    transition: transform .05s ease, filter .15s ease;
+  }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary { background: var(--signal); color: #1a1205; }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.05); }
+  .btn-ghost { background: transparent; color: var(--text); border-color: var(--line); }
+  .btn-ghost:hover:not(:disabled) { border-color: var(--signal); }
+
+  .statusbar {
+    display: flex; align-items: center; gap: 10px; margin: 16px 0 8px;
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.speaking { background: var(--signal); box-shadow: 0 0 0 0 var(--signal); animation: pulse 1.4s infinite; }
+  .dot.listening { background: var(--good); box-shadow: 0 0 0 0 var(--good); animation: pulse 1.1s infinite; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(255,178,36,.5); }
+    70% { box-shadow: 0 0 0 10px rgba(255,178,36,0); }
+    100% { box-shadow: 0 0 0 0 rgba(255,178,36,0); }
+  }
+
+  .transcript { display: flex; flex-direction: column; gap: 12px; min-height: 120px; }
+  .turn { display: flex; flex-direction: column; gap: 4px; }
+  .who {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .who.itw { color: var(--signal); }
+  .who.you { color: var(--good); }
+  .bubble {
+    background: var(--ink-850); border: 1px solid var(--line); border-radius: 12px;
+    padding: 10px 14px; font-size: 15px; line-height: 1.5; max-width: 90%;
+  }
+  .turn.you .bubble { align-self: flex-end; background: #12251c; border-color: #1e3a2c; }
+  .interim { color: var(--muted); font-style: italic; }
+
+  .listening-row { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 14px; line-height: 1.5; }
+  .hint code { font-family: var(--mono); color: var(--signal); }
+  .unsupported {
+    display: none; background: #2a1414; border: 1px solid #5a2424; color: #ffb4b4;
+    padding: 14px; border-radius: 12px; font-size: 14px; line-height: 1.5;
+  }
+  kbd {
+    font-family: var(--mono); font-size: 11px; background: var(--ink-800);
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; padding: 1px 6px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">YOLOapply · prototype</p>
+  <h1>Voice Interview — browser-native demo</h1>
+  <p class="sub">100% in-browser (Web Speech API). No server, no API keys, no LLM. The interviewer is a small scripted loop so you can feel the voice in/out, barge-in, and pacing before we wire up the real thing.</p>
+
+  <div id="unsupported" class="unsupported">
+    Your browser doesn't expose <b>SpeechRecognition</b>. This demo needs <b>Chrome</b> or <b>Edge</b> (desktop), served over <code>localhost</code> or HTTPS. Speech <i>synthesis</i> (the interviewer's voice) may still work below.
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <div class="field">
+        <label for="voice">Interviewer voice</label>
+        <select id="voice"></select>
+      </div>
+      <div class="field">
+        <label for="rate">Rate <span id="rateVal" style="color:var(--signal)">1.0</span>×</label>
+        <input id="rate" type="range" min="0.7" max="1.3" step="0.05" value="1" />
+      </div>
+      <div class="field">
+        <label for="persona">Style</label>
+        <select id="persona">
+          <option value="neutral">Neutral (FAANG-ish)</option>
+          <option value="friendly">Friendly</option>
+          <option value="stress">Skeptical</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="statusbar">
+    <span id="dot" class="dot"></span>
+    <span id="status">Idle — press Start to begin.</span>
+  </div>
+
+  <div class="card">
+    <div id="transcript" class="transcript">
+      <div class="hint">The interview transcript will appear here. The interviewer speaks, then listens for your answer. Pause for ~1.5s and it'll take your turn, then cross-question or move on.</div>
+    </div>
+
+    <div class="listening-row">
+      <button id="startBtn" class="btn-primary">▶ Start interview</button>
+      <button id="micBtn" class="btn-ghost" disabled>🎤 Hold to answer</button>
+      <button id="stopBtn" class="btn-ghost" disabled>■ End</button>
+    </div>
+
+    <p class="hint">
+      Tips: <kbd>Start</kbd> kicks off the first question. After the interviewer finishes talking it auto-listens — just speak. <b>Barge-in</b> works: start talking while it speaks and it'll stop. If auto-listen is flaky on your machine, use <kbd>Hold to answer</kbd> to push-to-talk.
+    </p>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const synth = window.speechSynthesis;
+  const $ = (id) => document.getElementById(id);
+
+  const els = {
+    unsupported: $("unsupported"),
+    voice: $("voice"), rate: $("rate"), rateVal: $("rateVal"), persona: $("persona"),
+    dot: $("dot"), status: $("status"), transcript: $("transcript"),
+    startBtn: $("startBtn"), micBtn: $("micBtn"), stopBtn: $("stopBtn"),
+  };
+
+  if (!SR) {
+    els.unsupported.style.display = "block";
+    els.micBtn.disabled = true;
+  }
+
+  // ---- Scripted "interviewer" --------------------------------------------
+  // Stands in for the LLM. Each topic has a seed question and a pool of
+  // generic drill follow-ups. We pick follow-ups based on how much the
+  // candidate said, to fake the "go deeper, then move on" feel.
+  const TOPICS = [
+    {
+      seed: "Let's start simple. Tell me about a project you're proud of, and what your specific role was on it.",
+      drills: [
+        "What was the hardest technical problem you ran into there?",
+        "Why did you choose that approach over the alternatives?",
+        "If you had to scale that to ten times the load, what breaks first?",
+      ],
+    },
+    {
+      seed: "Walk me through a time something you built broke in a way you didn't expect.",
+      drills: [
+        "How did you figure out the root cause?",
+        "What did you change so it wouldn't happen again?",
+        "Looking back, what would you have done differently from the start?",
+      ],
+    },
+    {
+      seed: "Pick a technology on your resume you'd call yourself strong in. How does it work under the hood?",
+      drills: [
+        "Okay, and where does that abstraction leak? When does it bite you?",
+        "How would you explain that to someone who'd never used it?",
+      ],
+    },
+  ];
+
+  const PERSONA_PREFIX = {
+    neutral: ["", "Got it. ", "Okay. ", "Right. "],
+    friendly: ["Nice. ", "Love that. ", "Cool, thanks. ", "Awesome. "],
+    stress: ["Hmm. ", "I'm not totally convinced. ", "Let's push on that. ", "Be specific. "],
+  };
+
+  const MOVE_ON = [
+    "Alright, let's switch gears.",
+    "Good. Moving on.",
+    "Okay, different topic.",
+  ];
+
+  // ---- State --------------------------------------------------------------
+  let running = false;
+  let topicIdx = 0;
+  let drillIdx = 0;
+  let recognizing = false;
+  let manualHold = false;
+  let lastAnswerWords = 0;
+  let pendingTurnEl = null;
+  let silenceTimer = null;
+  let recog = null;
+
+  function setStatus(text, mode) {
+    els.status.textContent = text;
+    els.dot.className = "dot" + (mode ? " " + mode : "");
+  }
+
+  function addTurn(who, text) {
+    const wrap = document.createElement("div");
+    wrap.className = "turn " + (who === "you" ? "you" : "");
+    const label = document.createElement("div");
+    label.className = "who " + (who === "you" ? "you" : "itw");
+    label.textContent = who === "you" ? "You" : "Interviewer";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    wrap.appendChild(label);
+    wrap.appendChild(bubble);
+    els.transcript.appendChild(wrap);
+    els.transcript.scrollIntoView(false);
+    window.scrollTo(0, document.body.scrollHeight);
+    return bubble;
+  }
+
+  // ---- Text to speech -----------------------------------------------------
+  function speak(text) {
+    return new Promise((resolve) => {
+      if (!synth) { resolve(); return; }
+      synth.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      const v = voicesById[els.voice.value];
+      if (v) u.voice = v;
+      u.rate = parseFloat(els.rate.value);
+      u.pitch = 1;
+      u.onend = resolve;
+      u.onerror = resolve;
+      setStatus("Interviewer speaking…", "speaking");
+      synth.speak(u);
+    });
+  }
+
+  // ---- Interview flow -----------------------------------------------------
+  async function askNext() {
+    if (!running) return;
+    let line;
+    const topic = TOPICS[topicIdx];
+
+    if (drillIdx === 0) {
+      // First question of a topic (or the very first).
+      line = topic.seed;
+    } else {
+      const prefixPool = PERSONA_PREFIX[els.persona.value];
+      const prefix = prefixPool[Math.floor(Math.random() * prefixPool.length)];
+
+      // Heuristic stand-in for the LLM's DRILL vs MOVE_ON decision:
+      // short/thin answers get pushed; once drills run out, move on.
+      const thin = lastAnswerWords < 12;
+      const drillsLeft = drillIdx <= topic.drills.length;
+
+      if (drillsLeft && (thin || drillIdx <= topic.drills.length)) {
+        const d = topic.drills[Math.min(drillIdx - 1, topic.drills.length - 1)];
+        line = prefix + d;
+      }
+      if (!drillsLeft) {
+        // exhausted this topic -> advance
+        topicIdx++;
+        drillIdx = 0;
+        if (topicIdx >= TOPICS.length) {
+          await wrapUp();
+          return;
+        }
+        const moveOn = MOVE_ON[Math.floor(Math.random() * MOVE_ON.length)];
+        line = moveOn + " " + TOPICS[topicIdx].seed;
+      }
+    }
+
+    addTurn("itw", line);
+    await speak(line);
+    drillIdx++;
+
+    // If we've blown past the drills for this topic, queue the move-on next round.
+    if (drillIdx > topic.drills.length + 1 && topicIdx === TOPICS.indexOf(topic)) {
+      topicIdx++;
+      drillIdx = 0;
+      if (topicIdx >= TOPICS.length) { await wrapUp(); return; }
+    }
+
+    if (!running) return;
+    startListening();
+  }
+
+  async function wrapUp() {
+    running = false;
+    const line = "That's all I had. In the real version, you'd get a scored breakdown here, where you went deep, where you got vague, and what to drill before the real thing. Thanks for trying the demo.";
+    addTurn("itw", line);
+    await speak(line);
+    setStatus("Interview complete.", "");
+    els.micBtn.disabled = true;
+    els.stopBtn.disabled = true;
+    els.startBtn.disabled = false;
+    els.startBtn.textContent = "▶ Restart";
+  }
+
+  // ---- Speech recognition -------------------------------------------------
+  function buildRecognizer() {
+    if (!SR) return null;
+    const r = new SR();
+    r.lang = "en-US";
+    r.interimResults = true;
+    r.continuous = true;
+
+    r.onstart = () => {
+      recognizing = true;
+      setStatus(manualHold ? "Listening (push-to-talk)…" : "Listening… speak your answer.", "listening");
+      if (!pendingTurnEl) {
+        pendingTurnEl = addTurn("you", "");
+        pendingTurnEl.classList.add("interim");
+      }
+    };
+
+    r.onresult = (e) => {
+      // Barge-in: if the interviewer is still talking, shut it up.
+      if (synth && synth.speaking) synth.cancel();
+
+      let finalTxt = "";
+      let interimTxt = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalTxt += t;
+        else interimTxt += t;
+      }
+      const full = (pendingTurnEl.dataset.final || "") + finalTxt;
+      if (finalTxt) pendingTurnEl.dataset.final = full;
+      pendingTurnEl.textContent = (full + " " + interimTxt).trim();
+
+      // Reset the silence countdown on every bit of speech (auto mode only).
+      if (!manualHold) {
+        clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => { if (recognizing) recog.stop(); }, 1500);
+      }
+    };
+
+    r.onerror = (e) => {
+      if (e.error === "no-speech" && running && !manualHold) {
+        // benign — just keep waiting
+        return;
+      }
+      setStatus("Recognition error: " + e.error, "");
+    };
+
+    r.onend = () => {
+      recognizing = false;
+      clearTimeout(silenceTimer);
+      if (pendingTurnEl) {
+        const finalText = (pendingTurnEl.dataset.final || pendingTurnEl.textContent || "").trim();
+        pendingTurnEl.classList.remove("interim");
+        if (!finalText) {
+          // nothing captured — drop the empty bubble
+          pendingTurnEl.parentElement.remove();
+          pendingTurnEl = null;
+          if (running && !manualHold) { startListening(); return; }
+        } else {
+          pendingTurnEl.textContent = finalText;
+          lastAnswerWords = finalText.split(/\s+/).filter(Boolean).length;
+          pendingTurnEl = null;
+        }
+      }
+      if (running && !manualHold) {
+        setStatus("Thinking…", "");
+        setTimeout(askNext, 350);
+      } else if (running && manualHold) {
+        setStatus("Got it — release captured. Thinking…", "");
+        setTimeout(askNext, 350);
+      }
+    };
+
+    return r;
+  }
+
+  function startListening() {
+    if (!SR || recognizing) return;
+    if (!recog) recog = buildRecognizer();
+    pendingTurnEl = null;
+    try { recog.start(); } catch (_) { /* already started */ }
+  }
+
+  // ---- Wiring -------------------------------------------------------------
+  els.startBtn.addEventListener("click", () => {
+    running = true;
+    topicIdx = 0; drillIdx = 0; lastAnswerWords = 0;
+    els.startBtn.disabled = true;
+    els.stopBtn.disabled = false;
+    if (SR) els.micBtn.disabled = false;
+    // Clear the placeholder hint
+    els.transcript.innerHTML = "";
+    askNext();
+  });
+
+  els.stopBtn.addEventListener("click", () => {
+    running = false;
+    if (synth) synth.cancel();
+    if (recog && recognizing) recog.stop();
+    setStatus("Stopped.", "");
+    els.startBtn.disabled = false;
+    els.startBtn.textContent = "▶ Restart";
+    els.stopBtn.disabled = true;
+    els.micBtn.disabled = true;
+  });
+
+  // Push-to-talk fallback
+  function holdStart() {
+    if (!running || !SR) return;
+    manualHold = true;
+    if (synth && synth.speaking) synth.cancel();
+    startListening();
+  }
+  function holdEnd() {
+    if (!manualHold) return;
+    manualHold = false;
+    if (recog && recognizing) recog.stop();
+  }
+  els.micBtn.addEventListener("mousedown", holdStart);
+  els.micBtn.addEventListener("mouseup", holdEnd);
+  els.micBtn.addEventListener("mouseleave", holdEnd);
+  els.micBtn.addEventListener("touchstart", (e) => { e.preventDefault(); holdStart(); });
+  els.micBtn.addEventListener("touchend", (e) => { e.preventDefault(); holdEnd(); });
+
+  els.rate.addEventListener("input", () => { els.rateVal.textContent = parseFloat(els.rate.value).toFixed(2); });
+
+  // ---- Voice list ---------------------------------------------------------
+  let voicesById = {};
+  function loadVoices() {
+    if (!synth) return;
+    const voices = synth.getVoices().filter(v => /en[-_]/i.test(v.lang));
+    if (!voices.length) return;
+    voicesById = {};
+    els.voice.innerHTML = "";
+    voices.forEach((v, i) => {
+      const id = v.name + "|" + v.lang;
+      voicesById[id] = v;
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = v.name + " (" + v.lang + ")" + (v.localService ? "" : " · network");
+      els.voice.appendChild(opt);
+    });
+    // Prefer a natural-sounding default if present
+    const preferred = voices.find(v => /natural|google|samantha|aria|jenny/i.test(v.name));
+    if (preferred) els.voice.value = preferred.name + "|" + preferred.lang;
+  }
+  if (synth) {
+    loadVoices();
+    synth.onvoiceschanged = loadVoices;
+  }
+})();
+</script>
+</body>
+</html>

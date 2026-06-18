@@ -6,6 +6,7 @@ import {
   FileText,
   LayoutDashboard,
   Mail,
+  MessageSquareText,
   PlusCircle,
   Radar,
   Settings,
@@ -36,6 +37,7 @@ const SECTIONS: Section[] = [
       { href: "/", icon: LayoutDashboard, label: "Dashboard" },
       { href: "/discover", icon: Radar, label: "Discover" },
       { href: "/funding", icon: TrendingUp, label: "Funding" },
+      { href: "/interview", icon: MessageSquareText, label: "Interview prep" },
     ],
   },
   {
