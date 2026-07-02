@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Check, Copy, KeyRound, Loader2, Mail, Plug, Save, Trash2, Users } from "lucide-react";
+import { Check, Copy, Download, KeyRound, Loader2, Mail, Plug, Save, Trash2, Users } from "lucide-react";
 import { PROVIDER_CONFIGS, DEFAULT_PROVIDER } from "@/lib/providers";
 
 interface CredStatus {
@@ -473,6 +473,26 @@ export default function CredentialsSettings() {
           )}
         </CardHeader>
         <CardContent className="space-y-3">
+          <div className="rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3 space-y-2.5">
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+                Install the extension
+              </div>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Download the extension, unzip it, then in Chrome open{" "}
+                <code className="font-mono">chrome://extensions</code>, turn on{" "}
+                <span className="font-medium">Developer mode</span>, click{" "}
+                <span className="font-medium">Load unpacked</span>, and pick the unzipped{" "}
+                <code className="font-mono">yoloapply-extension</code> folder. Then paste your token
+                (below) into the extension&rsquo;s Options page.
+              </p>
+            </div>
+            <Button asChild size="sm" variant="outline">
+              <a href="/api/extension/download" download>
+                <Download className="h-4 w-4" /> Download extension (.zip)
+              </a>
+            </Button>
+          </div>
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Personal API token for the YOLOapply Chrome extension (paste it into the extension's
             Options page). Only a hash is stored — the token is shown once, right after generating.
