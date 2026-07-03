@@ -11,6 +11,7 @@ import ApplicationActions from "./actions";
 import QuestionAnswerer from "./question-answerer";
 import JobDescriptionEditor from "./jd-editor";
 import FindContacts from "./find-contacts";
+import ShareButton from "./share-button";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +78,7 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
               </a>
             </Button>
           )}
+          <ShareButton id={app.id} canShare={hasPdf || hasCoverLetter || !!app.coverLetterText} />
         </div>
       </div>
 

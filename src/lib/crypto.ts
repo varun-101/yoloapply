@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "crypto";
 
 // Secrets at rest (per-user DeepSeek keys, SMTP app passwords) are encrypted
 // with AES-256-GCM under a single server-side key. Token format:
@@ -38,6 +38,13 @@ export function decryptSecret(token: string): string {
     decipher.update(Buffer.from(ctB64, "base64")),
     decipher.final(),
   ]).toString("utf8");
+}
+
+// Purpose-scoped key derivation for signing use-cases (e.g. public share-link
+// tokens in src/lib/shareLink.ts). Keeps the raw master key out of other
+// modules; a distinct purpose string yields an unrelated key.
+export function deriveKey(purpose: string): Buffer {
+  return createHmac("sha256", masterKey()).update(purpose).digest();
 }
 
 // Extension tokens are stored hashed (lookup by hash), never encrypted.

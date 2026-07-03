@@ -95,6 +95,10 @@ Next.js 14 App Router. Pages under `src/app/**` are client components fetching `
 
 Lead promote (or manual entry) → `Application` row → `personalize.ts` (DeepSeek picks 3-4 of the user's projects, tailors bullets per JD; `experienceBullets` is indexed per experience entry) → `latex.ts` (typed LaTeX builder, ATS-friendly) → `compile.ts` (remote texlive.net / latex.ytotech.com, local `tectonic`/`pdflatex` if installed) → PDF into the bucket via `saveResumeArtifacts`. `onePage.ts` enforces one-page output. Status changes and emails append `Event` rows.
 
+### Public share links (`src/lib/shareLink.ts`, `/share/[token]`)
+
+An application's resume PDF + cover letter can be shared via a public URL — Share button on the Application detail page → `POST /api/applications/[id]/share`. Tokens are **stateless, HMAC-signed** (`deriveKey("share-link-v1")` from `APP_ENCRYPTION_KEY` in `crypto.ts`) and carry `{applicationId, userId, exp}` — no DB table or migration; links expire (default 30 days, max 90) and can't be revoked individually (rotating the master key kills them all). The public surfaces — the `/share/[token]` page (allow-listed in `middleware.ts`) and `GET /api/share/[token]/file` (streams the PDFs from the bucket) — are rate-limited per-IP **and** globally via `src/lib/rateLimit.ts`, an in-memory fixed-window limiter on `globalThis` with the same single-instance caveat as the discovery locks.
+
 ### Interview coach (`src/lib/interview/`, `src/app/interview/`)
 
 A voice (or typed) mock interview that **feels like a real interview** — depth-first cross-questioning on each topic, not flat Q&A — then debriefs the candidate. Grounded in the same data as the resume (`UserProfile` + `Project` bank), so the **no-fabricated-facts rule applies**: the interviewer may probe things not in the profile (that's how you probe) but never *asserts* them. Two modes: **company** (launched from an `Application`, grounded in its `jdText`) and **general** (resume-only). Runs on the **user's own LLM key** (`getLlmConfig`) like every user-facing call — ≈1-2¢ per full interview.
