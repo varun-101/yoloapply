@@ -3,12 +3,7 @@ import { getProjectBank, ProjectBankItem } from "./projectBank";
 import { getProfile, CandidateProfile } from "./profile";
 import { getLlmConfig } from "./credentials";
 import { ResumeDraft } from "./latex";
-
-const SYSTEM_PROMPT = `You are an expert technical resume writer helping a software engineer tailor their resume to a specific job description.
-
-You produce concise, evidence-backed bullets. You NEVER fabricate metrics, employers, projects, or technologies that aren't supplied in the candidate's project bank or experience. You may rephrase existing facts to match the JD's vocabulary, but every claim must be traceable to the source material provided.
-
-Output STRICT JSON only — no prose, no markdown fences.`;
+import { systemFor } from "./prompts";
 
 interface PersonalizeInput {
   jobDescription: string;
@@ -50,22 +45,24 @@ export interface PersonalizeContext {
   profile: CandidateProfile;
   projectBank: ProjectBankItem[];
   llmCfg: LlmConfig;
+  system: string; // built-in prompt + the user's Settings → Writing instructions
 }
 
 export async function loadPersonalizeContext(userId: string): Promise<PersonalizeContext> {
-  const [profile, projectBank, llmCfg] = await Promise.all([
+  const [profile, projectBank, llmCfg, system] = await Promise.all([
     getProfile(userId),
     getProjectBank(userId),
     getLlmConfig(userId),
+    systemFor(userId, "resume"),
   ]);
-  return { profile, projectBank, llmCfg };
+  return { profile, projectBank, llmCfg, system };
 }
 
 export async function personalizeResume(
   ctx: PersonalizeContext,
   input: PersonalizeInput
 ): Promise<ResumeDraft> {
-  const { profile, projectBank, llmCfg } = ctx;
+  const { profile, projectBank, llmCfg, system } = ctx;
   const candidate = {
     name: profile.name,
     education: profile.education,
@@ -126,7 +123,7 @@ ${tightnessRules(input.tightness ?? 0)}
   };
   const parsed = await chatJson<ModelOut>({
     ...llmCfg,
-    system: SYSTEM_PROMPT,
+    system,
     user: userPrompt,
     maxTokens: 8192,
     temperature: 0.4,

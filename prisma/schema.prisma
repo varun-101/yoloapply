@@ -28,6 +28,7 @@ model User {
   profile            UserProfile?
   searchPref         SearchPreference?
   credential         UserCredential?
+  promptSetting      UserPromptSetting?
   projects           Project[]
   applications       Application[]
   contacts           Contact[]
@@ -135,6 +136,23 @@ model UserCredential {
   extensionTokenHash   String?  @unique // sha256 hex of the full "yolo_…" token
   extensionTokenPrefix String? // first chars, display only
   updatedAt            DateTime @updatedAt
+}
+
+// Per-user writing instructions layered onto the built-in system prompts
+// (src/lib/prompts.ts). Free text, never a replacement for the base prompt —
+// the composer appends these so the JSON contract and the no-fabrication rule
+// always survive whatever the user types.
+model UserPromptSetting {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  voice       String? // applies to every writing surface below
+  resume      String?
+  coldEmail   String?
+  coverLetter String?
+  answers     String?
+  updatedAt   DateTime @updatedAt
 }
 
 // Metadata for files living in the Supabase Storage bucket
