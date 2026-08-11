@@ -32,10 +32,20 @@ export interface EnrichInput {
   userId: string;
   company: string;
   urls?: (string | null | undefined)[]; // candidate URLs to derive the domain from
+  fallbackUrls?: (string | null | undefined)[]; // tried only if name resolution fails
   domain?: string | null; // explicit override (skips resolution)
   leadEmails?: string[]; // emails already attached to the lead (HN contactEmail)
+  leadRecruiter?: LeadRecruiter | null; // the person named on the listing itself
   force?: boolean;
   searchLocation?: string | null;
+}
+
+// The recruiter a job listing names. `company` is theirs, not necessarily the
+// employer's — staffing agencies handle a large share of Indian postings.
+export interface LeadRecruiter {
+  name: string;
+  title?: string | null;
+  company?: string | null;
 }
 
 export interface SourceDiagnostic {
@@ -69,6 +79,22 @@ function normalizeDomain(raw: string): string {
 
 function normalizeLocation(value?: string | null): string | null {
   return value?.trim().replace(/\s+/g, " ") || null;
+}
+
+// Is the recruiter's employer the company we're hiring at? "Acme Technologies
+// Pvt. Ltd." and "Acme" are the same place; "Success Pact" is not. Ties break
+// toward "different", which only ever costs us an email guess we shouldn't have
+// made anyway.
+function sameEmployer(a: string, b: string): boolean {
+  const strip = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/\b(pvt|private|ltd|limited|inc|llp|llc|corp|corporation|technologies|technology|solutions|consulting|india)\b/g, "")
+      .replace(/[^a-z0-9]/g, "");
+  const [x, y] = [strip(a), strip(b)];
+  // Names made up entirely of stripped words normalize to "" — compare raw.
+  if (!x || !y) return a.trim().toLowerCase() === b.trim().toLowerCase();
+  return x === y;
 }
 
 function intentKey(userId: string, domain: string, location?: string | null): string {
@@ -131,6 +157,7 @@ async function loadStatus(key: string): Promise<EnrichStatus | null> {
     verified: c.verified,
     verifyMethod: c.verifyMethod,
     seniorityRank: c.seniorityRank,
+    skipResolve: c.skipResolve,
     rank: c.rank,
   }));
   return rowToStatus(row, contacts);
@@ -152,7 +179,11 @@ export async function getEnrichStatusByDomain(
 export async function startEnrich(input: EnrichInput): Promise<EnrichStatus> {
   const resolved = input.domain
     ? { domain: normalizeDomain(input.domain), via: "url" as const }
-    : await resolveCompanyDomain({ company: input.company, urls: input.urls });
+    : await resolveCompanyDomain({
+        company: input.company,
+        urls: input.urls,
+        fallbackUrls: input.fallbackUrls,
+      });
 
   if (!resolved.domain) {
     return {
@@ -236,6 +267,25 @@ async function runEnrich(key: string, domain: string, input: EnrichInput): Promi
       .filter(isPlausibleEmail)
       .map((e) => ({ email: e.toLowerCase(), source: "lead", confidence: 0.85, verified: true, verifyMethod: "published" }));
 
+    // The recruiter the listing itself names: no email, but a confirmed name +
+    // title for the exact role, which beats anything a provider guesses about
+    // who to contact. If they work for a staffing agency rather than the
+    // employer, they're kept out of the domain-based resolution below.
+    const listingCands: RawCandidate[] = [];
+    if (input.leadRecruiter?.name) {
+      const recruiter = input.leadRecruiter;
+      const agency = recruiter.company?.trim() || null;
+      const sameCompany = !agency || sameEmployer(agency, company);
+      const title = [recruiter.title?.trim(), sameCompany ? null : agency].filter(Boolean).join(" · ");
+      listingCands.push({
+        name: recruiter.name.trim(),
+        title: title || undefined,
+        source: "listing",
+        confidence: 0,
+        skipResolve: !sameCompany,
+      });
+    }
+
     // Free lanes + Apollo, all in parallel; each is self-contained and never throws.
     const lanes: LaneResult[] = await Promise.all([
       fetchSiteContacts(domain),
@@ -249,7 +299,7 @@ async function runEnrich(key: string, domain: string, input: EnrichInput): Promi
         : Promise.resolve<LaneResult>({ source: "signalhire", candidates: [], status: "not_configured" }),
     ]);
 
-    let all: RawCandidate[] = [...manualCands, ...leadCands, ...lanes.flatMap((l) => l.candidates)];
+    let all: RawCandidate[] = [...manualCands, ...leadCands, ...listingCands, ...lanes.flatMap((l) => l.candidates)];
 
     // Infer the company's email shape from any real (name,email) pairs we have,
     // so guesses for the rest of the company are far stronger than blind defaults.
@@ -262,7 +312,8 @@ async function runEnrich(key: string, domain: string, input: EnrichInput): Promi
     const nameOnly: RawCandidate[] = [];
     const seenNames = new Set<string>();
     for (const c of all) {
-      if (c.email || !c.name || c.source === "apollo" || c.source === "signalhire" || c.source === "manual") continue;
+      if (c.email || !c.name || c.skipResolve) continue;
+      if (c.source === "apollo" || c.source === "signalhire" || c.source === "manual") continue;
       const key = c.name.toLowerCase().replace(/[^a-z]/g, "");
       if (!key || seenNames.has(key) || emailedNames.has(key)) continue;
       seenNames.add(key);
@@ -324,6 +375,7 @@ async function runEnrich(key: string, domain: string, input: EnrichInput): Promi
       };
     }
     stats.lead = { found: leadCands.length };
+    if (listingCands.length) stats.listing = { found: listingCands.length, status: "ok" };
     stats.manual = { found: manualCands.length, status: "ok" };
     if (searchKey) stats.portfolio = { found: all.filter((c) => c.source === "portfolio").length, error: portfolioError };
 
@@ -348,6 +400,7 @@ async function runEnrich(key: string, domain: string, input: EnrichInput): Promi
             verified: c.verified,
             verifyMethod: c.verifyMethod,
             seniorityRank: c.seniorityRank,
+            skipResolve: c.skipResolve,
             rank: c.rank,
           },
         })

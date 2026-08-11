@@ -1,5 +1,5 @@
 import { prisma } from "../db";
-import { htmlToText } from "../extractJob";
+import { htmlToText } from "../html";
 import { titleMatches, locationMatches, type SearchPrefs } from "../searchPrefs";
 import type { FetchResult, RawLead } from "./types";
 

@@ -1,5 +1,5 @@
 import { chatJson, serverApiKey } from "../llm";
-import { htmlToText } from "../extractJob";
+import { htmlToText } from "../html";
 import type { FetchResult, RawLead } from "./types";
 
 // Hacker News "Ask HN: Who is hiring?" — monthly thread, startup-heavy, and the

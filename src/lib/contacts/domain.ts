@@ -135,9 +135,15 @@ export interface ResolvedDomain {
 
 // Resolve the best email domain for a company, trying the lead's URLs first
 // (when they're a real company site), then the company-name lookup.
+//
+// `fallbackUrls` are tried only after the name lookup fails. They're company
+// sites a job board told us about, which are often a careers subdomain or
+// separate hiring site (amazon.jobs, not amazon.com) — good enough when nothing
+// else resolves, but not worth preferring over Clearbit's primary domain.
 export async function resolveCompanyDomain(opts: {
   company: string;
   urls?: (string | null | undefined)[];
+  fallbackUrls?: (string | null | undefined)[];
 }): Promise<ResolvedDomain> {
   for (const url of opts.urls ?? []) {
     const d = domainFromUrl(url);
@@ -145,5 +151,9 @@ export async function resolveCompanyDomain(opts: {
   }
   const byName = await domainFromCompanyName(opts.company);
   if (byName) return { domain: byName, via: "name" };
+  for (const url of opts.fallbackUrls ?? []) {
+    const d = domainFromUrl(url);
+    if (d) return { domain: d, via: "url" };
+  }
   return { domain: null, via: "none" };
 }

@@ -1,4 +1,4 @@
-import { htmlToText } from "../extractJob";
+import { htmlToText } from "../html";
 import type { SearchPrefs } from "../searchPrefs";
 import { anyUserMatcher } from "./ats";
 import { remoteScope } from "./remoteParse";

@@ -1,6 +1,6 @@
 import { prisma } from "../db";
 import { chatJson, serverApiKey } from "../llm";
-import { htmlToText } from "../extractJob";
+import { htmlToText } from "../html";
 
 // Funding radar: freshly-funded startups hire aggressively, so a new round is an
 // early signal that a company is about to open junior roles. There's no free

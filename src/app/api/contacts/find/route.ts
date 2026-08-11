@@ -9,7 +9,21 @@ import {
   markApplicationTaskNeedsReview,
   startApplicationTask,
 } from "@/lib/application-agent/workflow";
-import type { EnrichStatus } from "@/lib/contacts/pipeline";
+import type { EnrichStatus, LeadRecruiter } from "@/lib/contacts/pipeline";
+
+// The recruiter the job listing itself named, straight off the promoted lead.
+// Surfaced independently of enrichment: we know this person without resolving a
+// domain or calling a provider, so the UI must be able to show them even when
+// the search fails, hasn't run, or found nobody.
+async function loadListingRecruiter(userId: string, applicationId: string): Promise<LeadRecruiter | null> {
+  const userLead = await prisma.userLead.findFirst({
+    where: { userId, applicationId },
+    select: { jobLead: { select: { recruiterName: true, recruiterTitle: true, recruiterCompany: true } } },
+  });
+  const lead = userLead?.jobLead;
+  if (!lead?.recruiterName) return null;
+  return { name: lead.recruiterName, title: lead.recruiterTitle, company: lead.recruiterCompany };
+}
 
 async function syncRecruiterTask(applicationId: string, status: EnrichStatus) {
   await initializeApplicationWorkflow(applicationId);
@@ -86,7 +100,9 @@ export async function POST(req: NextRequest) {
     let company: string = companyIn ?? "";
     let searchLocation: string | null = null;
     const urls: (string | null | undefined)[] = [];
+    const fallbackUrls: (string | null | undefined)[] = [];
     const leadEmails: string[] = [];
+    let leadRecruiter: LeadRecruiter | null = null;
 
     if (applicationId) {
       const app = await prisma.application.findFirst({
@@ -102,11 +118,33 @@ export async function POST(req: NextRequest) {
       // (HN), both stronger signals than the apply URL.
       const userLead = await prisma.userLead.findFirst({
         where: { userId: user.id, applicationId: app.id },
-        select: { jobLead: { select: { url: true, contactEmail: true } } },
+        select: {
+          jobLead: {
+            select: {
+              url: true,
+              contactEmail: true,
+              companyUrl: true,
+              recruiterName: true,
+              recruiterTitle: true,
+              recruiterCompany: true,
+            },
+          },
+        },
       });
       if (userLead?.jobLead) {
-        urls.unshift(userLead.jobLead.url);
-        if (userLead.jobLead.contactEmail) leadEmails.push(userLead.jobLead.contactEmail);
+        const lead = userLead.jobLead;
+        urls.unshift(lead.url);
+        // A board listing's URL is the board's; the employer site the source
+        // reported is the only company URL we have for it.
+        fallbackUrls.push(lead.companyUrl);
+        if (lead.contactEmail) leadEmails.push(lead.contactEmail);
+        if (lead.recruiterName) {
+          leadRecruiter = {
+            name: lead.recruiterName,
+            title: lead.recruiterTitle,
+            company: lead.recruiterCompany,
+          };
+        }
       }
     }
 
@@ -118,13 +156,15 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       company,
       urls,
+      fallbackUrls,
       domain: domainIn ?? undefined,
       leadEmails,
+      leadRecruiter,
       force: !!force,
       searchLocation,
     });
     if (applicationId) await syncRecruiterTask(applicationId, status);
-    return NextResponse.json(status);
+    return NextResponse.json({ ...status, listingRecruiter: leadRecruiter });
   } catch (e) {
     return apiError(e);
   }
@@ -136,6 +176,7 @@ export async function GET(req: NextRequest) {
     const sp = req.nextUrl.searchParams;
     const domainParam = sp.get("domain");
     const applicationId = sp.get("applicationId");
+    const listingRecruiter = applicationId ? await loadListingRecruiter(user.id, applicationId) : null;
 
     // Fast path: poll by an already-resolved domain (no network resolution).
     if (domainParam) {
@@ -153,9 +194,10 @@ export async function GET(req: NextRequest) {
       if (status && applicationId) {
         await syncRecruiterTask(applicationId, status);
       }
-      return NextResponse.json(
-        status ?? { domain: domainParam, status: "idle", company: "", pattern: null, error: null, enrichedAt: null, contacts: [], searchLocation, sourceStats: {} }
-      );
+      return NextResponse.json({
+        ...(status ?? { domain: domainParam, status: "idle", company: "", pattern: null, error: null, enrichedAt: null, contacts: [], searchLocation, sourceStats: {} }),
+        listingRecruiter,
+      });
     }
 
     // Mount/reload path: resolve the application's domain WITHOUT kicking a run,
@@ -168,22 +210,26 @@ export async function GET(req: NextRequest) {
       if (!app) return NextResponse.json({ error: "application not found" }, { status: 404 });
       const userLead = await prisma.userLead.findFirst({
         where: { userId: user.id, applicationId },
-        select: { jobLead: { select: { url: true } } },
+        select: { jobLead: { select: { url: true, companyUrl: true } } },
       });
+      // Must mirror POST's resolution exactly — a different domain here would
+      // poll a different cache row than the run writes to.
       const { domain } = await resolveCompanyDomain({
         company: app.company,
         urls: [userLead?.jobLead?.url, app.applyUrl, app.jdUrl],
+        fallbackUrls: [userLead?.jobLead?.companyUrl],
       });
       const profile = await prisma.userProfile.findUnique({ where: { userId: user.id }, select: { recruiterLocation: true } });
       const searchLocation = profile?.recruiterLocation?.trim() || app.location?.trim() || null;
       if (!domain) {
-        return NextResponse.json({ domain: null, status: "no_domain", company: app.company, pattern: null, error: null, enrichedAt: null, contacts: [], searchLocation, sourceStats: {} });
+        return NextResponse.json({ domain: null, status: "no_domain", company: app.company, pattern: null, error: null, enrichedAt: null, contacts: [], searchLocation, sourceStats: {}, listingRecruiter });
       }
       const status = await getEnrichStatusByDomain(domain, user.id, searchLocation);
       if (status) await syncRecruiterTask(applicationId, status);
-      return NextResponse.json(
-        status ?? { domain, status: "idle", company: app.company, pattern: null, error: null, enrichedAt: null, contacts: [], searchLocation, sourceStats: {} }
-      );
+      return NextResponse.json({
+        ...(status ?? { domain, status: "idle", company: app.company, pattern: null, error: null, enrichedAt: null, contacts: [], searchLocation, sourceStats: {} }),
+        listingRecruiter,
+      });
     }
 
     return NextResponse.json({ error: "domain or applicationId required" }, { status: 400 });

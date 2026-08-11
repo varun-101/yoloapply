@@ -24,10 +24,15 @@ interface Contact {
   verified: boolean;
   verifyMethod: string | null;
   seniorityRank: number;
+  skipResolve: boolean; // works elsewhere: no provider lookup against this company
 }
 
 interface Diagnostic { found: number; status?: string; error?: string; creditsRemaining?: string }
+// The recruiter the job listing named. Known from the lead alone, so it arrives
+// with every response — including "no_domain", where no search can run at all.
+interface ListingRecruiter { name: string; title: string | null; company: string | null }
 interface Status {
+  listingRecruiter: ListingRecruiter | null;
   domain: string | null;
   company: string;
   status: "idle" | "running" | "completed" | "failed" | "no_domain";
@@ -40,10 +45,27 @@ interface Status {
 }
 
 const SOURCE_LABEL: Record<string, string> = {
-  lead: "from listing", apollo: "Apollo", signalhire: "SignalHire", manual: "manual",
+  lead: "from listing", listing: "named on listing", apollo: "Apollo", signalhire: "SignalHire", manual: "manual",
   site: "company site", github: "GitHub", hn: "HN post", portfolio: "portfolio",
   role_inbox: "role inbox", pattern: "pattern guess",
 };
+
+// A person we know by name but have no profile link for (the recruiter a job
+// listing names, typically) — send the user straight to a LinkedIn search for
+// them rather than the generic company one. `org` should be where THEY work,
+// which for an agency recruiter is not the company being applied to.
+function personSearchHref(name: string, org: string): string {
+  const keywords = [name, org].filter(Boolean).join(" ");
+  return `https://www.linkedin.com/search/results/people/?${new URLSearchParams({ keywords }).toString()}`;
+}
+
+// An external recruiter's employer is appended to their title as "… · Agency".
+// Only a title that actually carries that separator names a different org;
+// anything else is just a job title and would poison the search keywords.
+function orgFromTitle(title: string | null): string | null {
+  if (!title?.includes("·")) return null;
+  return title.split("·").pop()?.trim() || null;
+}
 
 function draftHref(applicationId: string, company: string, role: string, contact: Contact): string {
   const query = new URLSearchParams({ applicationId, company, role });
@@ -151,6 +173,15 @@ export default function FindContacts({ applicationId, company, role }: { applica
   const running = status?.status === "running";
   const people = (status?.contacts ?? []).filter((contact) => contact.source !== "role_inbox" && !!contact.name);
   const inboxes = (status?.contacts ?? []).filter((contact) => contact.source === "role_inbox");
+  // Once a run has folded the listing recruiter into the ranked results, that
+  // entry is richer (it may carry a resolved email), so the standalone card
+  // stands down rather than showing the same person twice.
+  const normName = (value: string | null | undefined) => (value ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  const listingRecruiter = status?.listingRecruiter ?? null;
+  const showListingCard =
+    !!listingRecruiter && !people.some((person) => normName(person.name) === normName(listingRecruiter.name));
+  const listingIsAgency =
+    !!listingRecruiter?.company && normName(listingRecruiter.company) !== normName(company);
   const linkedInSearch = `https://www.linkedin.com/search/results/people/?${new URLSearchParams({
     keywords: [company, "recruiter", status?.searchLocation].filter(Boolean).join(" "),
   }).toString()}`;
@@ -172,6 +203,37 @@ export default function FindContacts({ applicationId, company, role }: { applica
         </div>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
+        {showListingCard && listingRecruiter && (
+          <div className="rounded-md border border-slate-200 p-3 dark:border-slate-800">
+            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">
+              Named on this listing
+            </div>
+            <div className="mt-1.5 min-w-0">
+              <div className="truncate font-medium">{listingRecruiter.name}</div>
+              {listingRecruiter.title && (
+                <div className="truncate text-xs text-slate-600 dark:text-slate-300">{listingRecruiter.title}</div>
+              )}
+              {listingIsAgency && (
+                <div className="mt-1 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+                  Hiring for {company} through {listingRecruiter.company}, so their email won&apos;t be at
+                  the {company} domain.
+                </div>
+              )}
+            </div>
+            <div className="mt-2.5">
+              <Button asChild size="sm" variant="outline">
+                <a
+                  href={personSearchHref(listingRecruiter.name, listingRecruiter.company || company)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Search className="h-3.5 w-3.5" /> Find on LinkedIn
+                </a>
+              </Button>
+            </div>
+          </div>
+        )}
+
         {!status || status.status === "idle" ? (
           <div className="space-y-3">
             <p className="text-xs text-slate-500 dark:text-slate-400">Discover relevant people first. Contact details are revealed only after you choose a person.</p>
@@ -224,8 +286,16 @@ export default function FindContacts({ applicationId, company, role }: { applica
                       <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-slate-400 dark:text-slate-500">{(contact.sources ?? contact.source).split(",").map((source) => SOURCE_LABEL[source] ?? source).join(" · ")}</span>
                     </div>
                     <div className="mt-2.5 flex flex-wrap gap-1.5">
-                      {contact.linkedinUrl && <Button asChild size="sm" variant="outline"><a href={contact.linkedinUrl} target="_blank" rel="noreferrer"><ExternalLink className="h-3.5 w-3.5" /> LinkedIn</a></Button>}
-                      {contact.email ? <Button asChild size="sm"><Link href={draftHref(applicationId, company, role, contact)}><Mail className="h-3.5 w-3.5" /> Draft</Link></Button> : <Button size="sm" onClick={() => reveal(contact)} disabled={!contact.id || resolvingId === contact.id}>{resolvingId === contact.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />} Reveal &amp; select</Button>}
+                      {contact.linkedinUrl
+                        ? <Button asChild size="sm" variant="outline"><a href={contact.linkedinUrl} target="_blank" rel="noreferrer"><ExternalLink className="h-3.5 w-3.5" /> LinkedIn</a></Button>
+                        : !contact.email && <Button asChild size="sm" variant="outline"><a href={personSearchHref(contact.name ?? "", orgFromTitle(contact.title) ?? company)} target="_blank" rel="noreferrer"><Search className="h-3.5 w-3.5" /> Find on LinkedIn</a></Button>}
+                      {contact.email
+                        ? <Button asChild size="sm"><Link href={draftHref(applicationId, company, role, contact)}><Mail className="h-3.5 w-3.5" /> Draft</Link></Button>
+                        : contact.skipResolve && !contact.linkedinUrl
+                          // Nothing to reveal: they don't work at this domain, so
+                          // a provider lookup here can only return the wrong person.
+                          ? <span className="text-[11px] text-slate-500 dark:text-slate-400">Works at {orgFromTitle(contact.title) ?? "another company"} · reach them on LinkedIn</span>
+                          : <Button size="sm" onClick={() => reveal(contact)} disabled={!contact.id || resolvingId === contact.id}>{resolvingId === contact.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />} Reveal &amp; select</Button>}
                     </div>
                   </li>
                 ))}

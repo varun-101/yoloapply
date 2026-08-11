@@ -1,4 +1,6 @@
 import { chatJson, llm, LLM_MODEL, parseJsonFromText, type LlmConfig } from "./llm";
+import { htmlToText } from "./html";
+import { fetchInstahyrePosting, instahyreJobIdFromUrl } from "./discovery/instahyre";
 
 export interface ExtractedJob {
   company: string;
@@ -59,28 +61,44 @@ export async function extractFromText(
   };
 }
 
-// HTML → text: strip script/style, drop tags, collapse whitespace.
-export function htmlToText(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<!--([\s\S]*?)-->/g, " ")
-    .replace(/<\/?(p|div|li|tr|br|h[1-6]|section|article|header|footer)[^>]*>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/[ \t\f\v]+/g, " ")
-    .replace(/\s*\n\s*/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+// Board-specific structured lookups, keyed off the posting URL. Returns null
+// when the URL isn't one we can read directly, so the caller falls back to
+// scraping + LLM extraction.
+async function extractFromBoardApi(url: string): Promise<ExtractedJob | null> {
+  const instahyreJobId = instahyreJobIdFromUrl(url);
+  if (instahyreJobId) {
+    // Instahyre's HTML pages sit behind a Cloudflare bot challenge that answers
+    // a server-side fetch with 403 (`cf-mitigated: challenge`) no matter the
+    // headers — but its JSON API is open. Failing here would mean falling
+    // through to a scrape that cannot succeed, so surface the real reason.
+    const posting = await fetchInstahyrePosting(instahyreJobId);
+    if (!posting) {
+      throw new Error(
+        "This Instahyre posting is no longer listed (the board's API doesn't return it). It was probably filled or withdrawn."
+      );
+    }
+    if (posting.jdText.length < 50) {
+      throw new Error("Instahyre returned this posting without a job description.");
+    }
+    return {
+      company: posting.company,
+      role: posting.role,
+      location: posting.location,
+      jdText: posting.jdText,
+      applyUrl: posting.applyUrl ?? url,
+      source: "portal",
+    };
+  }
+  return null;
 }
 
 export async function extractFromUrl(cfg: LlmConfig, url: string): Promise<ExtractedJob> {
+  // Some boards serve their postings as structured JSON through the same public
+  // API their own front-end uses. That beats scraping on every axis — exact
+  // fields, no LLM call, and no bot challenge — so try it before fetching HTML.
+  const direct = await extractFromBoardApi(url);
+  if (direct) return direct;
+
   const res = await fetch(url, {
     headers: {
       "User-Agent":

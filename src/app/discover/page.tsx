@@ -660,6 +660,7 @@ export default function DiscoverPage() {
           <option value="greenhouse">Greenhouse</option>
           <option value="lever">Lever</option>
           <option value="ashby">Ashby</option>
+          <option value="instahyre">Instahyre</option>
           <option value="hn">HN Who&apos;s Hiring</option>
           <option value="weworkremotely">WeWorkRemotely</option>
           <option value="remoteok">RemoteOK</option>

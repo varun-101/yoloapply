@@ -1,4 +1,4 @@
-import { htmlToText } from "../extractJob";
+import { htmlToText } from "../html";
 import type { FetchResult, RawLead } from "./types";
 
 // jobfound.org is a thin Next.js front-end over a public Hygraph (GraphCMS)

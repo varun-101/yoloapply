@@ -81,6 +81,7 @@ export function mergeAndRank(candidates: RawCandidate[], preferredLocation?: str
         verified: !!c.verified,
         verifyMethod: c.verifyMethod ?? null,
         seniorityRank: recruiterRelevanceRank(c.title, c.location, preferredLocation),
+        skipResolve: !!c.skipResolve,
         rank: 0,
         _sources: new Set([c.source]),
       };
@@ -103,6 +104,10 @@ export function mergeAndRank(candidates: RawCandidate[], preferredLocation?: str
       target.verifyMethod = c.verifyMethod ?? target.verifyMethod;
     }
     target.seniorityRank = Math.max(target.seniorityRank, recruiterRelevanceRank(c.title, c.location, preferredLocation));
+    // Only stays set if EVERY lane that found this person says they're external.
+    // A lane that located them at the company itself (GitHub org, site page) is
+    // evidence they do work there, so the domain lookup becomes legitimate.
+    target.skipResolve = target.skipResolve && !!c.skipResolve;
     return target;
   };
 
@@ -150,6 +155,7 @@ export function mergeAndRank(candidates: RawCandidate[], preferredLocation?: str
         verified: m.verified,
         verifyMethod: m.verifyMethod,
         seniorityRank: m.seniorityRank,
+        skipResolve: m.skipResolve,
         rank,
       } satisfies RankedContact;
     })

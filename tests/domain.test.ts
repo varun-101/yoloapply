@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   isBoardHost,
   isGenericHost,
   registrableDomain,
   domainFromUrl,
+  resolveCompanyDomain,
 } from "@/lib/contacts/domain";
 
 describe("isBoardHost", () => {
@@ -64,5 +65,54 @@ describe("domainFromUrl", () => {
     expect(domainFromUrl(null)).toBeNull();
     expect(domainFromUrl(undefined)).toBeNull();
     expect(domainFromUrl("http://")).toBeNull();
+  });
+});
+
+describe("resolveCompanyDomain", () => {
+  // Stub the Clearbit name lookup so the suite stays offline.
+  function stubClearbit(suggestions: { name: string; domain: string }[] | null) {
+    vi.stubGlobal("fetch", async () =>
+      suggestions
+        ? ({ ok: true, json: async () => suggestions } as Response)
+        : ({ ok: false, json: async () => [] } as Response)
+    );
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("prefers a real company URL over the name lookup", async () => {
+    stubClearbit([{ name: "Acme", domain: "wrong.com" }]);
+    expect(await resolveCompanyDomain({ company: "Acme", urls: ["https://careers.acme.com/1"] })).toEqual({
+      domain: "acme.com",
+      via: "url",
+    });
+  });
+
+  it("falls back to the name lookup when every URL is a job board", async () => {
+    stubClearbit([{ name: "Acme", domain: "acme.com" }]);
+    expect(
+      await resolveCompanyDomain({ company: "Acme", urls: ["https://www.instahyre.com/job-1-sde-at-acme/"] })
+    ).toEqual({ domain: "acme.com", via: "name" });
+  });
+
+  // A board-reported company site is often a careers/hiring domain
+  // (amazon.jobs), so it must not outrank Clearbit's primary domain.
+  it("uses a fallback URL only after the name lookup fails", async () => {
+    stubClearbit([{ name: "Amazon", domain: "amazon.com" }]);
+    expect(
+      await resolveCompanyDomain({ company: "Amazon", fallbackUrls: ["http://www.amazon.jobs/"] })
+    ).toEqual({ domain: "amazon.com", via: "name" });
+
+    stubClearbit(null);
+    expect(
+      await resolveCompanyDomain({ company: "Amazon", fallbackUrls: ["http://www.amazon.jobs/"] })
+    ).toEqual({ domain: "amazon.jobs", via: "url" });
+  });
+
+  it("reports no domain when nothing resolves", async () => {
+    stubClearbit(null);
+    expect(await resolveCompanyDomain({ company: "Nowhere Ltd", urls: [null, "linkedin.com/jobs/1"] })).toEqual({
+      domain: null,
+      via: "none",
+    });
   });
 });

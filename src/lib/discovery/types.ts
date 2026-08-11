@@ -14,6 +14,13 @@ export interface RawLead {
   skills?: string;
   contactEmail?: string;
   postedAt?: Date;
+  // The person named on the listing as hiring for it (Instahyre publishes one).
+  // Their company is kept separately because it is frequently a staffing agency,
+  // not the employer — the contact finder needs to tell the two apart.
+  recruiterName?: string;
+  recruiterTitle?: string;
+  recruiterCompany?: string;
+  companyUrl?: string; // employer's own site, when the source knows it
 }
 
 export interface FetchResult {
@@ -29,6 +36,7 @@ export const SOURCE_TIER: Record<string, number> = {
   greenhouse: 2,
   lever: 2,
   ashby: 2,
+  instahyre: 2,
   hn: 3,
   weworkremotely: 3,
   remoteok: 3,
@@ -41,6 +49,7 @@ export const SOURCE_LABEL: Record<string, string> = {
   greenhouse: "Greenhouse",
   lever: "Lever",
   ashby: "Ashby",
+  instahyre: "Instahyre",
   hn: "HN Who's Hiring",
   weworkremotely: "WeWorkRemotely",
   remoteok: "RemoteOK",

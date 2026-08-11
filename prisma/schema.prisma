@@ -519,7 +519,7 @@ model ScanRun {
 model JobLead {
   id String @id @default(cuid())
 
-  source       String // "sheet" | "jobfound" | "greenhouse" | "lever" | "ashby" | "hn"
+  source       String // "sheet" | "jobfound" | "greenhouse" | "lever" | "ashby" | "hn" | "instahyre"
   externalId   String // hygraph post id; for the sheet, a hash of company+role+date
   sources      String? // comma-separated list when the same posting was found in multiple sources
   company      String
@@ -534,6 +534,14 @@ model JobLead {
   skills       String?
   postedAt     DateTime?
   contactEmail String? // hiring contact when the source includes one (HN posts often do)
+  // The person the listing names as hiring for it (Instahyre publishes one).
+  // recruiterCompany is often a staffing agency rather than the employer, which
+  // is exactly why it's stored: the contact finder must not guess an address at
+  // the employer's domain for an agency recruiter.
+  recruiterName    String?
+  recruiterTitle   String?
+  recruiterCompany String?
+  companyUrl       String? // employer's own site — the listing URL is the board's
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -632,8 +640,12 @@ model DiscoveredContact {
   location         String?
   providerPersonId String?
   contactStatus    String   @default("not_requested") // not_requested | resolving | resolved | failed
-  source           String // "lead" | "apollo" | "signalhire" | "manual" | "site" | "github" | "hn" | "portfolio" | "role_inbox" | "pattern"
+  source           String // "lead" | "listing" | "apollo" | "signalhire" | "manual" | "site" | "github" | "hn" | "portfolio" | "role_inbox" | "pattern"
   sources          String? // comma-separated when multiple lanes agreed on the same email
+  // This person does not work at `cache.domain` (an agency recruiter named on
+  // the listing). Blocks the name+domain provider lookup on reveal, which would
+  // otherwise return whoever at the EMPLOYER happens to share their name.
+  skipResolve      Boolean  @default(false)
   confidence       Float    @default(0) // 0..1
   verified         Boolean  @default(false)
   verifyMethod     String? // "published" | "apollo" | "mx" | "pattern"

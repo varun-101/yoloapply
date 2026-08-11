@@ -6,6 +6,7 @@
 
 export type ContactSource =
   | "lead" // contactEmail already on the JobLead (HN posts often carry one)
+  | "listing" // the recruiter the job listing itself names (Instahyre publishes one)
   | "apollo" // Apollo people-DB: who works there by title (+ verified email)
   | "signalhire"
   | "manual"
@@ -29,6 +30,11 @@ export interface RawCandidate {
   confidence: number; // 0..1, lane's own confidence in the EMAIL (0 when no email)
   verified?: boolean; // address confirmed real (published / provider-verified)
   verifyMethod?: "published" | "apollo" | "mx" | "pattern" | "llm";
+  // Set when this person does NOT work at the company we resolved a domain for
+  // (an external agency recruiter). They're a real, useful contact, but guessing
+  // an address at that domain — or web-searching them against it — would invent
+  // a person who doesn't exist there, so both steps skip them.
+  skipResolve?: boolean;
 }
 
 export interface LaneResult {
@@ -56,6 +62,7 @@ export interface RankedContact {
   verified: boolean;
   verifyMethod: string | null;
   seniorityRank: number;
+  skipResolve: boolean; // see RawCandidate.skipResolve
   rank: number; // composite sort score
 }
 

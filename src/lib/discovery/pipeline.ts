@@ -3,6 +3,7 @@ import { prisma } from "../db";
 import { fetchAtsLeads } from "./ats";
 import { runFundingScan } from "./funding";
 import { fetchHnLeads } from "./hn";
+import { fetchInstahyreLeads } from "./instahyre";
 import { fetchJobfoundLeads } from "./jobfound";
 import { fetchRemoteOkLeads } from "./remoteok";
 import { fetchRemotiveLeads } from "./remotive";
@@ -88,6 +89,10 @@ interface GlobalFetchOutput {
   // user's ScanRun for this fetch.
   sourceStats: SourceStats[];
   created: number; // new catalog postings added by this fetch
+  // How many fetchers ran. NOT sourceStats.length — the ATS fetcher reports one
+  // stat row per board type (greenhouse/lever/ashby) but counts as one source
+  // in the progress UI.
+  sourcesTotal: number;
 }
 
 interface GlobalFetchState {
@@ -95,6 +100,12 @@ interface GlobalFetchState {
   sourcesDone: number;
   sourcesTotal: number;
 }
+
+// Opening estimate for the progress UI, shown for the moment between "scan
+// started" and the fetch actually kicking off. doGlobalFetch overwrites it with
+// the real count, so adding a source can never desync the two (the old fixed 4
+// is what produced "6/4 sources done").
+const EXPECTED_SOURCE_COUNT = 8;
 
 // Locks and progress live on globalThis so they survive dev HMR (same trick as
 // the PrismaClient cache in db.ts) and are visible to the status GET handler.
@@ -123,9 +134,14 @@ function patchProgress(userId: string, patch: Partial<DiscoveryProgress>) {
 export function getUserScanProgress(userId: string): DiscoveryProgress | null {
   const p = progressMap().get(userId);
   if (!p) return null;
-  // While the shared fetch runs, its source counter is the real progress.
+  // While the shared fetch runs, its source counter is the real progress —
+  // both halves of it, or the ratio reads wrong.
   if (p.phase === "fetching sources" && g.__globalFetch) {
-    return { ...p, sourcesDone: g.__globalFetch.sourcesDone };
+    return {
+      ...p,
+      sourcesDone: g.__globalFetch.sourcesDone,
+      sourcesTotal: g.__globalFetch.sourcesTotal,
+    };
   }
   return { ...p };
 }
@@ -143,7 +159,7 @@ export function runGlobalFetch(
     const state: GlobalFetchState = {
       promise: Promise.resolve(null as never), // replaced synchronously below
       sourcesDone: 0,
-      sourcesTotal: 7,
+      sourcesTotal: EXPECTED_SOURCE_COUNT,
     };
     g.__globalFetch = state;
     state.promise = doGlobalFetch(trigger, extraUserIds, state).finally(() => {
@@ -185,7 +201,9 @@ async function doGlobalFetch(
         state.sourcesDone++;
         return r;
       });
-    const [sheet, jobfound, ats, hn, wwr, remoteok, remotive] = await Promise.all([
+    // Kicked off together; the array is also what the progress UI counts, so
+    // the total can't fall out of step with the sources actually being fetched.
+    const sources = [
       tick(fetchSheetLeads()),
       tick(fetchJobfoundLeads()),
       tick(fetchAtsLeads(prefsList, seenByAll)),
@@ -193,13 +211,19 @@ async function doGlobalFetch(
       tick(fetchWeWorkRemotelyLeads(prefsList)),
       tick(fetchRemoteOkLeads(prefsList)),
       tick(fetchRemotiveLeads(prefsList)),
+      tick(fetchInstahyreLeads(prefsList, seenByAll)),
+    ] as const;
+    state.sourcesTotal = sources.length;
+
+    const [sheet, jobfound, ats, hn, wwr, remoteok, remotive, instahyre] = await Promise.all([
+      ...sources,
       // Funding radar runs alongside the lead sources but isn't one: it produces
       // no JobLeads (so it's not ticked or ingested) — it refreshes the radar and
       // folds any freshly-funded company's live board into the watchlist for the
       // NEXT tick. Best-effort; a failure must not sink the catalog refresh.
       runFundingScan().catch(() => null),
     ]);
-    const results = [sheet, jobfound, ...ats, hn, wwr, remoteok, remotive];
+    const results = [sheet, jobfound, ...ats, hn, wwr, remoteok, remotive, instahyre];
 
     // Ingest into the shared catalog ONCE (dedupe across sources + history).
     const { stats, created } = await ingestCatalog(results);
@@ -208,7 +232,14 @@ async function doGlobalFetch(
       where: { id: fetchRun.id },
       data: { finishedAt: new Date(), sourceStats: JSON.stringify(stats) },
     });
-    return { fetchRunId: fetchRun.id, startedAt: fetchRun.startedAt, results, sourceStats: stats, created };
+    return {
+      fetchRunId: fetchRun.id,
+      startedAt: fetchRun.startedAt,
+      results,
+      sourceStats: stats,
+      created,
+      sourcesTotal: sources.length,
+    };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     await prisma.fetchRun
@@ -229,6 +260,8 @@ type CatalogRow = {
   canonicalUrl: string | null;
   sources: string | null;
   jdText: string | null;
+  recruiterName: string | null;
+  companyUrl: string | null;
   postedAt: Date | null;
   createdAt: Date;
 };
@@ -242,6 +275,8 @@ const CATALOG_ROW_SELECT = {
   canonicalUrl: true,
   sources: true,
   jdText: true,
+  recruiterName: true,
+  companyUrl: true,
   postedAt: true,
   createdAt: true,
 } as const;
@@ -271,8 +306,9 @@ function pickFingerprintTwin(
 }
 
 // Merge a re-found posting into the catalog row we already hold: append its
-// source label (if new) and backfill a missing JD from it. Mutates `target` so
-// later leads in the same fetch see the merged state.
+// source label (if new) and backfill anything the row is missing that this
+// sighting knows — the JD, the listed recruiter, the employer's site. Mutates
+// `target` so later leads in the same fetch see the merged state.
 async function recordExtraSource(target: CatalogRow, lead: RawLead): Promise<void> {
   const sources = target.sources ?? target.source;
   const data: Prisma.JobLeadUpdateInput = {};
@@ -284,6 +320,17 @@ async function recordExtraSource(target: CatalogRow, lead: RawLead): Promise<voi
   if (!target.jdText && lead.jdText) {
     data.jdText = lead.jdText;
     target.jdText = lead.jdText;
+  }
+  // The three recruiter fields describe one person, so they move together.
+  if (!target.recruiterName && lead.recruiterName) {
+    data.recruiterName = lead.recruiterName;
+    data.recruiterTitle = lead.recruiterTitle ?? null;
+    data.recruiterCompany = lead.recruiterCompany ?? null;
+    target.recruiterName = lead.recruiterName;
+  }
+  if (!target.companyUrl && lead.companyUrl) {
+    data.companyUrl = lead.companyUrl;
+    target.companyUrl = lead.companyUrl;
   }
   if (Object.keys(data).length > 0) {
     await prisma.jobLead.update({ where: { id: target.id }, data });
@@ -337,11 +384,9 @@ async function ingestCatalog(
       const sourceKey = `${lead.source}::${lead.externalId}`;
       const existingRow = bySourceId.get(sourceKey);
       if (existingRow) {
-        // Same posting already in the catalog — enrich a missing JD if we now have one.
-        if (!existingRow.jdText && lead.jdText) {
-          await prisma.jobLead.update({ where: { id: existingRow.id }, data: { jdText: lead.jdText } });
-          existingRow.jdText = lead.jdText;
-        }
+        // Same posting already in the catalog — backfill whatever this sighting
+        // adds (JD, recruiter, employer site).
+        await recordExtraSource(existingRow, lead);
         s.duplicates++;
         continue;
       }
@@ -380,6 +425,10 @@ async function ingestCatalog(
             experience: lead.experience ?? null,
             skills: lead.skills ?? null,
             contactEmail: lead.contactEmail ?? null,
+            recruiterName: lead.recruiterName ?? null,
+            recruiterTitle: lead.recruiterTitle ?? null,
+            recruiterCompany: lead.recruiterCompany ?? null,
+            companyUrl: lead.companyUrl ?? null,
             postedAt: lead.postedAt ?? null,
           },
           select: CATALOG_ROW_SELECT,
@@ -426,7 +475,7 @@ export function runUserScan(
     trigger,
     phase: "starting",
     sourcesDone: 0,
-    sourcesTotal: 4,
+    sourcesTotal: EXPECTED_SOURCE_COUNT,
     created: 0,
   });
   const p = (async () => {
@@ -435,7 +484,12 @@ export function runUserScan(
       patchProgress(userId, { phase: "fetching sources" });
       fetched = await runGlobalFetch(trigger, [userId]);
     }
-    patchProgress(userId, { phase: "processing leads", sourcesDone: 4 });
+    // Fetching is over by here, however many sources there turned out to be.
+    patchProgress(userId, {
+      phase: "processing leads",
+      sourcesTotal: fetched.sourcesTotal,
+      sourcesDone: fetched.sourcesTotal,
+    });
     return fanOutUser(userId, fetched, trigger);
   })().finally(() => {
     scans.delete(userId);

@@ -1,5 +1,5 @@
 import { fetchText } from "../http";
-import { htmlToText } from "../../extractJob";
+import { htmlToText } from "../../html";
 import { extractEmails, emailDomain, isRoleInbox } from "../verify";
 import type { LaneResult, RawCandidate } from "../types";
 

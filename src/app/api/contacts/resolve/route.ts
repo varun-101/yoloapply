@@ -78,7 +78,16 @@ export async function POST(req: NextRequest) {
           if (!apolloKey) throw new Error("Add an Apollo API key in Settings → Credentials.");
           resolved = await resolveApolloContact(apolloKey, { ...candidate, domain: candidate.cache.domain });
         } else if (candidate.linkedinUrl && signalhireKey) {
+          // A LinkedIn URL identifies this exact person, so it stays valid even
+          // for someone who doesn't work at the employer.
           resolved = await resolveSignalHireContact(signalhireKey, candidate);
+        } else if (candidate.skipResolve) {
+          // Looking this person up by name against the EMPLOYER's domain would
+          // return whoever works there under the same name, and we'd store that
+          // stranger's address as the recruiter for this application.
+          throw new Error(
+            `${candidate.name ?? "This recruiter"} is hiring for this role from outside the company, so their email can't be looked up against the employer's domain. Open their LinkedIn profile to reach them, or add their address with "Add person".`
+          );
         } else if (apolloKey) {
           resolved = await resolveApolloContact(apolloKey, { ...candidate, domain: candidate.cache.domain });
         } else {
