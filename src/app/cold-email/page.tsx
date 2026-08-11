@@ -156,7 +156,7 @@ function ColdEmailInner() {
               <label className="text-xs text-slate-500 dark:text-slate-400">Company</label>
               <Input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Anthropic" />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="text-xs text-slate-500 dark:text-slate-400">Recipient name</label>
                 <Input value={recipientName} onChange={(e) => setRecipientName(e.target.value)} placeholder="Dario Amodei" />
@@ -188,7 +188,7 @@ function ColdEmailInner() {
                 placeholder="Just shipped tool use v2. Hiring for inference team. Etc."
               />
             </div>
-            <Button onClick={generate} disabled={busy !== null || !company}>
+            <Button className="w-full sm:w-auto" onClick={generate} disabled={busy !== null || !company}>
               {busy === "draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
               Draft email
             </Button>
@@ -262,7 +262,7 @@ function ColdEmailInner() {
             <Button
               onClick={send}
               disabled={busy !== null || !subject || !emailBody || !recipientEmail}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white"
             >
               {busy === "send" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               Send from {fromAddress ?? "your account"}

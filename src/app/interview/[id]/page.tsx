@@ -218,7 +218,12 @@ export default function InterviewRoom() {
     : "idle";
 
   return (
-    <div className="p-4 md:p-8 max-w-3xl mx-auto flex flex-col h-[calc(100vh-2rem)]">
+    // The room is a fixed-height column with an internally scrolling
+    // transcript. On phones that height must discount the top strip, the
+    // bottom tab bar and both safe areas — and use dvh, since 100vh on mobile
+    // Safari means the *expanded* viewport and would hide the answer box
+    // behind the URL bar.
+    <div className="p-4 md:p-8 max-w-3xl mx-auto flex flex-col h-[calc(100dvh_-_8.75rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] md:h-[calc(100vh_-_2rem)]">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-3">
         <div>

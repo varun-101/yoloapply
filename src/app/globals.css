@@ -41,6 +41,29 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
+    /* Installed to a home screen the app paints edge to edge (viewport-fit=
+       cover), so the shell keeps its own clearance from the notch, the rounded
+       corners and the home indicator. Every inset is 0 in a browser tab and on
+       hardware without cutouts, so this costs nothing elsewhere. */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  /* Touch: no grey flash on tap — it reads as a rendering glitch once the app
+     is installed and looks native. */
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* iOS Safari zooms the viewport whenever a focused field's text is under
+     16px, and never zooms back out. The app's fields are text-sm (14px), so
+     force 16px on phones — this is why forms felt broken on mobile. Desktop
+     keeps the tighter scale. */
+  @media (max-width: 767px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
   }
   /* Headings carry the display face everywhere — pages don't opt in. */
   h1,

@@ -1,12 +1,14 @@
 import "./globals.css";
 import Link from "next/link";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Instrument_Sans, JetBrains_Mono } from "next/font/google";
 import { ClerkProvider, SignedIn, SignOutButton, UserButton } from "@clerk/nextjs";
 import { LogOut } from "lucide-react";
 import { currentUser } from "@clerk/nextjs/server";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { RailNav, MobileNav } from "@/components/nav";
+import { RailNav, BottomNav } from "@/components/nav";
+import { RegisterSW } from "@/components/pwa/register-sw";
+import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { clerkAppearance } from "@/lib/clerkAppearance";
 import { prisma } from "@/lib/db";
 
@@ -21,6 +23,34 @@ const THEME_INIT = `(function(){try{var t=localStorage.getItem("theme");if(t==="
 export const metadata: Metadata = {
   title: "YOLOapply",
   description: "Auto-apply to jobs with AI-tailored LaTeX resumes and cold email outreach.",
+  applicationName: "YOLOapply",
+  // Home-screen install (see src/app/manifest.ts — Next links the manifest
+  // automatically). iOS ignores the manifest for these two, hence the
+  // apple-specific block and the apple-touch-icon.
+  appleWebApp: {
+    capable: true,
+    title: "YOLOapply",
+    // "default" keeps the status bar opaque and legible in both themes;
+    // black-translucent would put content under the clock.
+    statusBarStyle: "default",
+  },
+  icons: {
+    icon: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  formatDetection: { telephone: false },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // Fills the notch/rounded corners; the safe-area insets in globals.css keep
+  // content clear of them. No maximum-scale — pinch zoom stays available.
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#FFFFFF" },
+    { media: "(prefers-color-scheme: dark)", color: "#0B0F1E" },
+  ],
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -37,6 +67,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
       </head>
       <body className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+        <RegisterSW />
+        {/* Offered once signed in — installing is about fast access to the
+            pipeline, not to the marketing page. */}
+        {user && <InstallPrompt />}
         <div className="flex min-h-screen flex-col md:flex-row">
           {/* App chrome only for signed-in users — signed-out visitors get the
               full-bleed landing page (and the sign-in/up screens) with no rail.
@@ -99,8 +133,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </aside>
 
           {/* Small screens: the rail folds into a top strip. */}
-          <header className="md:hidden sticky top-0 z-40 bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between px-4 pt-3 pb-1">
+          {/* Small screens: a slim identity bar up top, destinations live in
+              the bottom tab bar. Installed on iOS this strip sits under the
+              clock, so it carries the top inset itself (0 in a browser tab). */}
+          <header className="md:hidden sticky top-0 z-40 bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 pt-[env(safe-area-inset-top)]">
+            <div className="flex items-center justify-between px-4 py-2.5">
               <Link href="/" className="flex items-center gap-2">
                 <div className="grid h-6 w-6 place-items-center rounded-md bg-signal font-display text-xs font-bold text-slate-950">
                   Y
@@ -114,12 +151,19 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <ThemeToggle compact />
               </div>
             </div>
-            <MobileNav isAdmin={isAdmin} />
           </header>
+
+          <BottomNav isAdmin={isAdmin} email={email} />
           </>
           )}
 
-          <main className="flex-1 min-w-0">{children}</main>
+          {/* Bottom padding clears the fixed tab bar (plus the home indicator);
+              on md+ the bar is gone and so is the padding. */}
+          <main
+            className={`flex-1 min-w-0 ${user ? "pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-0" : ""}`}
+          >
+            {children}
+          </main>
         </div>
       </body>
     </html>

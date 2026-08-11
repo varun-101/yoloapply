@@ -12,7 +12,15 @@ import { NextRequest, NextResponse } from "next/server";
 // "/" is the public landing page; the dashboard renders there only once signed
 // in. "/share/…" is the public resume/cover-letter share page — its token is
 // the auth (verified in the page/route handlers, which also rate-limit).
-const isPublicRoute = createRouteMatcher(["/", "/sign-in(.*)", "/sign-up(.*)", "/share(.*)"]);
+// "/offline" is the service worker's fallback page: it is precached without
+// credentials, so it must render (not redirect) for a signed-out request.
+const isPublicRoute = createRouteMatcher([
+  "/",
+  "/sign-in(.*)",
+  "/sign-up(.*)",
+  "/share(.*)",
+  "/offline",
+]);
 
 // Extension IDs differ between dev and prod, so we accept any extension
 // origin and rely on the Bearer token for auth.

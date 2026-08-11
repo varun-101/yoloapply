@@ -210,7 +210,7 @@ export default function NewApplication() {
           <CardTitle>Details</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-slate-500 dark:text-slate-400">Company</label>
               <Input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Anthropic" />
@@ -220,11 +220,11 @@ export default function NewApplication() {
               <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="Software Engineer, Backend" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-slate-500 dark:text-slate-400">Source</label>
               <select
-                className="flex h-9 w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
+                className="flex h-11 md:h-9 w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
               >
@@ -251,16 +251,16 @@ export default function NewApplication() {
           {err && (
             <div className="rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">{err}</div>
           )}
-          <div className="flex items-center gap-2 pt-2">
+          <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center">
             <Button
               disabled={busy || !company || !role}
               onClick={() => submit(true)}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
               Save &amp; personalize resume
             </Button>
-            <Button variant="outline" disabled={busy || !company || !role} onClick={() => submit(false)}>
+            <Button variant="outline" className="w-full sm:w-auto" disabled={busy || !company || !role} onClick={() => submit(false)}>
               Save without personalizing
             </Button>
           </div>

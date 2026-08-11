@@ -27,7 +27,49 @@ export default async function ContactsPage() {
               No contacts yet — they&apos;ll show up here as you send cold emails.
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* Same trade as /applications: a 7-column table is unreadable on
+                a phone, so small screens get a tappable list instead. */}
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800 md:hidden">
+              {contacts.map((c) => (
+                <li key={c.id}>
+                  <Link
+                    href={`/contacts/${c.id}`}
+                    className="block px-4 py-3.5 active:bg-slate-50 dark:active:bg-slate-800/40"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium">{c.name}</div>
+                        <div className="truncate text-sm text-slate-600 dark:text-slate-300">
+                          {c.title ? `${c.title} · ` : ""}
+                          {c.company}
+                        </div>
+                      </div>
+                      {c.source === "cold_email_target" && (
+                        <Badge className="shrink-0 bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">
+                          cold email
+                        </Badge>
+                      )}
+                    </div>
+                    {c.email && (
+                      <div className="mt-1 truncate font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                        {c.email}
+                      </div>
+                    )}
+                    <div className="mt-1 font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                      last email{" "}
+                      {c.emails[0]?.sentAt
+                        ? formatDate(c.emails[0].sentAt)
+                        : c.emails[0]
+                        ? c.emails[0].status
+                        : "—"}
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+
+            <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead className="text-left font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
                 <tr>
@@ -73,6 +115,7 @@ export default async function ContactsPage() {
               </tbody>
             </table>
             </div>
+            </>
           )}
         </CardContent>
       </Card>

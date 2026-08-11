@@ -140,8 +140,10 @@ function sourceLabel(s: string): string {
   return SOURCE_LABEL[s] ?? s;
 }
 
+// On phones the filters are a 2-up grid of full-width selects (each one a
+// comfortable tap target); from md they shrink back to an inline filter row.
 const SELECT_CLS =
-  "h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-sm text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-signal/70";
+  "h-11 md:h-9 w-full md:w-auto min-w-0 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-sm text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-signal/70";
 
 export default function DiscoverPage() {
   const [leads, setLeads] = useState<Lead[] | null>(null);
@@ -490,13 +492,13 @@ export default function DiscoverPage() {
           <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1.5">
             Lead radar · sheet + jobfound + ats boards + hn
           </div>
-          <h1 className="text-3xl font-semibold">Discover</h1>
+          <h1 className="text-2xl sm:text-3xl font-semibold">Discover</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1.5">
             One shared list of fresh postings — everyone sees the same catalog; your fit scores are
             your own.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex w-full flex-wrap items-center gap-2 md:w-auto md:gap-3">
           <Link
             href="/discover/history"
             className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
@@ -509,13 +511,13 @@ export default function DiscoverPage() {
           </Link>
 
           {/* Score now — every user, with their own controls. */}
-          <div className="relative">
+          <div className="relative flex-1 md:flex-none">
             <div className="flex">
               <Button
                 variant="outline"
                 onClick={scoreNow}
                 disabled={scoring}
-                className="rounded-r-none"
+                className="flex-1 rounded-r-none md:flex-none"
                 title="Fit-score the catalog with your DeepSeek key"
               >
                 {scoring ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gauge className="h-4 w-4" />}
@@ -533,7 +535,7 @@ export default function DiscoverPage() {
               </Button>
             </div>
             {showScoreOpts && (
-              <div className="absolute right-0 z-20 mt-2 w-64 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 shadow-lg space-y-3">
+              <div className="absolute right-0 z-20 mt-2 w-[min(16rem,calc(100vw-2rem))] rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 shadow-lg space-y-3">
                 <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
                   Scoring controls
                 </div>
@@ -569,7 +571,7 @@ export default function DiscoverPage() {
           </div>
 
           {canScan && (
-            <Button onClick={scan} disabled={scanning}>
+            <Button className="flex-1 md:flex-none" onClick={scan} disabled={scanning}>
               {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RadarIcon className="h-4 w-4" />}
               {scanning ? "Scanning…" : "Scan now"}
             </Button>
@@ -630,7 +632,7 @@ export default function DiscoverPage() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search company, role, location, skills, JD…"
-          className="h-9 w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 pl-9 pr-9 text-sm text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-signal/70"
+          className="h-11 md:h-9 w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 pl-9 pr-9 text-sm text-slate-700 dark:text-slate-300 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-signal/70"
         />
         {query && (
           <button
@@ -644,7 +646,7 @@ export default function DiscoverPage() {
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2 mb-4">
+      <div className="grid grid-cols-2 gap-2 mb-4 md:flex md:flex-wrap">
         <select className={SELECT_CLS} value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="new">New</option>
           <option value="promoted">Promoted</option>
@@ -719,7 +721,11 @@ export default function DiscoverPage() {
           {filteredLeads.map((lead) => (
             <Card key={lead.id}>
               <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-4">
+                {/* Phones stack: details first, then a full-width action row.
+                    Side-by-side (the md layout) starved the text column on a
+                    390px screen — the title wrapped one word per line under
+                    the buttons. */}
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between md:gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium">{lead.company}</span>
@@ -760,9 +766,9 @@ export default function DiscoverPage() {
                       <div className="mt-1 text-xs text-slate-400 dark:text-slate-500 truncate">{lead.skills}</div>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 md:shrink-0 md:flex-nowrap">
                     {lead.contactEmail && lead.status !== "dismissed" && (
-                      <Button asChild size="sm" variant="outline" title={`Cold email ${lead.contactEmail}`}>
+                      <Button asChild size="sm" variant="outline" className="w-full md:w-auto" title={`Cold email ${lead.contactEmail}`}>
                         <Link
                           href={`/cold-email?company=${encodeURIComponent(lead.company)}&role=${encodeURIComponent(lead.role)}&email=${encodeURIComponent(lead.contactEmail)}${lead.applicationId ? `&applicationId=${lead.applicationId}` : ""}`}
                         >
@@ -771,7 +777,7 @@ export default function DiscoverPage() {
                       </Button>
                     )}
                     {lead.status === "promoted" && lead.applicationId ? (
-                      <Button asChild variant="outline" size="sm">
+                      <Button asChild variant="outline" size="sm" className="w-full md:w-auto">
                         <Link href={`/applications/${lead.applicationId}`}>
                           <CheckCircle2 className="h-4 w-4" /> View application
                         </Link>
@@ -783,6 +789,7 @@ export default function DiscoverPage() {
                         {lead.jdText ? (
                           <Button
                             size="sm"
+                            className="w-full md:w-auto"
                             onClick={() => promote(lead, true)}
                             disabled={busyLead === lead.id}
                           >
@@ -797,6 +804,7 @@ export default function DiscoverPage() {
                           <Button
                             size="sm"
                             variant="outline"
+                            className="w-full md:w-auto"
                             onClick={() => fetchJd(lead)}
                             disabled={busyLead === lead.id}
                             title="Fetch the posting and extract the job description"
@@ -812,6 +820,7 @@ export default function DiscoverPage() {
                         <Button
                           size="sm"
                           variant={lead.jdText || lead.url ? "outline" : "default"}
+                          className="flex-1 md:flex-none"
                           onClick={() => promote(lead, false)}
                           disabled={busyLead === lead.id}
                         >
@@ -820,6 +829,7 @@ export default function DiscoverPage() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          className="shrink-0"
                           onClick={() => dismiss(lead)}
                           disabled={busyLead === lead.id}
                           title="Dismiss"

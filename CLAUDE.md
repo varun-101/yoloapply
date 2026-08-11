@@ -19,6 +19,7 @@ npm run db:studio    # browse the Postgres DB
 npx tsc --noEmit     # typecheck — no test suite exists
 npx tsx scripts/seed-ats-companies.ts   # re-seed ATS watchlist from data/ats-companies/probe-results.json
 npx tsx scripts/probe-ats-companies.ts  # re-probe all ~10k boards in the dataset (~5 min), then re-seed
+npx tsx scripts/generate-icons.ts       # re-render every PWA/home-screen icon from its one vector source
 ```
 
 - One-off scripts: write to `scripts/*.ts`, run with `npx tsx`, start with `try { process.loadEnvFile(".env") } catch {}`.
@@ -99,6 +100,14 @@ Lead promote (or manual entry) → `Application` row → `personalize.ts` (DeepS
 
 An application's resume PDF + cover letter can be shared via a public URL — Share button on the Application detail page → `POST /api/applications/[id]/share`. Tokens are **stateless, HMAC-signed** (`deriveKey("share-link-v1")` from `APP_ENCRYPTION_KEY` in `crypto.ts`) and carry `{applicationId, userId, exp}` — no DB table or migration; links expire (default 30 days, max 90) and can't be revoked individually (rotating the master key kills them all). The public surfaces — the `/share/[token]` page (allow-listed in `middleware.ts`) and `GET /api/share/[token]/file` (streams the PDFs from the bucket) — are rate-limited per-IP **and** globally via `src/lib/rateLimit.ts`, an in-memory fixed-window limiter on `globalThis` with the same single-instance caveat as the discovery locks.
 
+### Installable app / PWA (`src/app/manifest.ts`, `public/sw.js`, `src/components/pwa/`)
+
+The app installs to an iOS/Android home screen and opens standalone (no browser chrome). `src/app/manifest.ts` is the Next metadata route served at `/manifest.webmanifest` (exempt from the middleware matcher, so it's fetchable pre-session); the apple-specific bits iOS doesn't read from a manifest live in `metadata.appleWebApp` + `viewport` in `layout.tsx`. Every icon is rendered from **one vector source** in `scripts/generate-icons.ts` (rounded `any`, full-bleed `maskable` with the mark inside Android's safe circle, opaque `apple-touch-icon`) — edit the mark there and re-run, never hand-edit a PNG.
+
+The service worker is **deliberately thin**: navigations are network-only with an `/offline` fallback, `/_next/static/*` + `/icons/*` are cache-first (Next's chunks are content-hashed so they can never go stale; the icon filenames are *not*, so bump `VERSION` in `sw.js` after re-running the icon script), and everything else — all of `/api/*`, Clerk, POSTs — is untouched. Nothing tenant-scoped is ever cached: this is multi-tenant, and a cached HTML page or API response is a cross-session data leak waiting to happen. `/offline` is public in `middleware.ts` precisely so the worker can precache it with `credentials: "omit"` (a signed-out shell). Registration is **production-only** (`register-sw.tsx`) because dev chunks aren't hashed; test with `npm run build && npm run start` over https or localhost (a service worker needs a secure context, so a plain-http LAN IP can't install).
+
+`install-prompt.tsx` handles the two platforms differently because they *are* different: Chromium fires `beforeinstallprompt` (stashed, replayed on tap, and it only fires when the install criteria are met, so the banner self-hides where install is impossible), while iOS exposes no install API at all and only gets Share → Add to Home Screen instructions. Dismissal snoozes 14 days rather than disabling forever. Safe-area insets (`env(safe-area-inset-*)` in `globals.css` + on the mobile header) keep the standalone app clear of the notch and home indicator.
+
 ### Interview coach (`src/lib/interview/`, `src/app/interview/`)
 
 A voice (or typed) mock interview that **feels like a real interview** — depth-first cross-questioning on each topic, not flat Q&A — then debriefs the candidate. Grounded in the same data as the resume (`UserProfile` + `Project` bank), so the **no-fabricated-facts rule applies**: the interviewer may probe things not in the profile (that's how you probe) but never *asserts* them. Two modes: **company** (launched from an `Application`, grounded in its `jdText`) and **general** (resume-only). Runs on the **user's own LLM key** (`getLlmConfig`) like every user-facing call — ≈1-2¢ per full interview.
@@ -135,9 +144,21 @@ Standalone vanilla-JS extension; nothing is bundled into or imported from the Ne
   - `slate-*` is re-tinted to a deep indigo-ink scale in `tailwind.config.ts` — never reference raw grays; keep using `slate-*` utilities.
   - `signal` (#FFB224 amber) is reserved for the agent: primary buttons, live scan activity, the on-watch pulse, active nav. Don't use amber tints for neutral chips/badges — statuses keep their own hues (`statusColor`/`statusBarColor` in `utils.ts`).
   - Three faces via `next/font` variables: `font-display` (Bricolage Grotesque — headings get it automatically from `globals.css`, also big stat numerals), `font-sans` (Instrument Sans, body), `font-mono` (JetBrains Mono). Rule: **machine-produced data is mono** — timestamps, counts, fit scores, sources, emails, table headers, eyebrow labels; human content is sans.
-  - The sidebar rail (`layout.tsx` + `src/components/nav.tsx`) follows the theme like the rest of the app: `bg-white` in light, `dark:bg-slate-950` in dark. Every rail color (links, footer, theme toggle) carries both a light base and a `dark:` twin — the old `white/…` overlays are now `dark:`-only, paired with `slate-100`/`slate-600` light equivalents. On small screens it folds into a top strip (`MobileNav`).
-  - Page header pattern: mono uppercase eyebrow → `text-3xl font-semibold` h1 → one-line muted subtitle.
+  - The sidebar rail (`layout.tsx` + `src/components/nav.tsx`) follows the theme like the rest of the app: `bg-white` in light, `dark:bg-slate-950` in dark. Every rail color (links, footer, theme toggle) carries both a light base and a `dark:` twin — the old `white/…` overlays are now `dark:`-only, paired with `slate-100`/`slate-600` light equivalents. On small screens it is replaced by a bottom tab bar (`BottomNav`, see the mobile rules below), leaving only a slim identity strip on top.
+  - Page header pattern: mono uppercase eyebrow → `text-2xl sm:text-3xl font-semibold` h1 → one-line muted subtitle. A primary action next to the title goes `w-full sm:w-auto`.
   - The Chrome extension mirrors the theme with plain CSS variables (no Tailwind) in `extension/popup/popup.css`, `extension/options/options.css`, and `extension/content/content.css` — same ink hexes, `--signal` amber, mono-for-data rule. Keep them in sync if the palette changes.
+
+### Mobile is a first-class layout, not a fallback
+
+The app is installed to phone home screens (see the PWA section), so every page must be usable one-handed at 390px. The rules that keep it that way:
+
+- **Bottom tab bar, not a scrolling strip.** `BottomNav` in `nav.tsx` pins Home / Discover / Pipeline / Interview plus a **More** bottom sheet (every other rail destination, same sections, plus sign-out). Both navigations share `activeHref`, so highlighting can't drift. The old top strip scrolled sideways and hid destinations off the right edge — don't reintroduce that pattern. `layout.tsx` pads `<main>` by the bar's height so nothing hides behind it.
+- **Never put a table on a phone.** Give small screens a tappable `<ul>` list (`md:hidden`) and keep the table for `hidden md:block` — see `/applications`, `/contacts` and the dashboard. Side-scrolling a 6-column table pushed the identifying column off-screen. Dense admin-only tables may still scroll inside their card.
+- **Stack, don't squeeze.** A card whose actions sit beside its text needs `flex-col … md:flex-row`; otherwise a `shrink-0` button column starves the `min-w-0` text column and titles wrap one word per line (this is exactly what broke the Discover lead cards). Long primary actions go `w-full md:w-auto`, secondary ones `flex-1 md:flex-none`.
+- **Touch targets ≥44px.** The `Button` and `Input` primitives are already `h-11 md:h-9`; raw `<select>`/`<input>` elements must carry the same `h-11 md:h-9`.
+- **16px fields.** `globals.css` forces `font-size: 16px` on inputs under `md` — below that iOS Safari zooms the viewport on focus and never zooms back. Don't override it with a smaller inline font size.
+- **Safe areas.** `env(safe-area-inset-*)` is applied to the body, the mobile header, and the tab bar; anything else `fixed` to a screen edge needs its own inset.
+- **Full-height panels use `dvh`, not `vh`** (`100vh` on mobile Safari means the expanded viewport, so the bottom of the pane hides behind the URL bar), and must subtract the mobile chrome — see the interview room's height calc.
 
 ## Environment (`.env`)
 

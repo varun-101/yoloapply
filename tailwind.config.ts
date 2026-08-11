@@ -48,9 +48,17 @@ const config: Config = {
           "0%": { transform: "translateX(-100%)" },
           "100%": { transform: "translateX(400%)" },
         },
+        // Mobile bottom sheets (the "More" nav) enter from the bottom edge.
+        "sheet-up": {
+          from: { transform: "translateY(100%)" },
+          to: { transform: "translateY(0)" },
+        },
+        "fade-in": { from: { opacity: "0" }, to: { opacity: "1" } },
       },
       animation: {
         sweep: "sweep 1.6s ease-in-out infinite",
+        "sheet-up": "sheet-up 220ms cubic-bezier(0.32, 0.72, 0, 1)",
+        "fade-in": "fade-in 180ms ease-out",
       },
     },
   },

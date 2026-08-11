@@ -56,12 +56,12 @@ export default async function Dashboard() {
           <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1.5">
             Overview
           </div>
-          <h1 className="text-3xl font-semibold">The hunt, at a glance</h1>
+          <h1 className="text-2xl sm:text-3xl font-semibold">The hunt, at a glance</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1.5">
             Everything the agent has tracked, applied to, and sent on your behalf.
           </p>
         </div>
-        <Button asChild>
+        <Button asChild className="w-full sm:w-auto">
           <Link href="/applications/new">
             <PlusCircle className="h-4 w-4" />
             New application
@@ -157,7 +157,29 @@ export default async function Dashboard() {
               </Link>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* Phones: the same rows as a tappable list. */}
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800 md:hidden">
+              {apps.map((a) => (
+                <li key={a.id}>
+                  <Link
+                    href={`/applications/${a.id}`}
+                    className="flex items-start justify-between gap-3 px-4 py-3.5 active:bg-slate-50 dark:active:bg-slate-800/40"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">{a.company}</div>
+                      <div className="truncate text-sm text-slate-600 dark:text-slate-300">{a.role}</div>
+                      <div className="mt-1 font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                        {a.source} · {formatDate(a.createdAt)}
+                      </div>
+                    </div>
+                    <Badge className={`${statusColor(a.status)} shrink-0`}>{a.status}</Badge>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+
+            <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead className="text-left font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
                 <tr>
@@ -197,6 +219,7 @@ export default async function Dashboard() {
               </tbody>
             </table>
             </div>
+            </>
           )}
         </CardContent>
       </Card>
