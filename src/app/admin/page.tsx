@@ -13,7 +13,7 @@ export default async function AdminPage() {
         <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1.5">
           Admin
         </div>
-        <h1 className="text-3xl font-semibold">Control room</h1>
+        <h1 className="text-2xl sm:text-3xl font-semibold">Control room</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400 mt-1.5">
           Run discovery for everyone and choose who else can trigger scans.
         </p>

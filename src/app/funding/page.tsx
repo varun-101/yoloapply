@@ -106,7 +106,7 @@ export default function FundingPage() {
           <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1.5">
             Funding radar · india · inc42 + yourstory
           </div>
-          <h1 className="text-3xl font-semibold">Funding</h1>
+          <h1 className="text-2xl sm:text-3xl font-semibold">Funding</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1.5">
             Recently-funded Indian tech startups — fresh raises hire fast. Companies with a live
             careers board fold into Discover automatically; the rest are cold-email targets.

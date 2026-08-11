@@ -149,7 +149,7 @@ export default async function ContactDetail({ params }: { params: { id: string }
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                   {e.recipientTitle && (
                     <Field label="Recipient title" value={e.recipientTitle} />
                   )}

@@ -77,7 +77,7 @@ export default function InterviewLauncher() {
       <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-signal mb-2">
         Interview prep
       </p>
-      <h1 className="text-3xl font-semibold mb-1">Practice interview</h1>
+      <h1 className="text-2xl sm:text-3xl font-semibold mb-1">Practice interview</h1>
       <p className="text-slate-500 dark:text-slate-400 mb-6 text-sm">
         A voice mock interview that cross-questions you on your own resume, then debriefs you. Best in
         Chrome, Edge, or Safari (Mac).
