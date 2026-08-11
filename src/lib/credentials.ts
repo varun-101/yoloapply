@@ -98,6 +98,66 @@ export async function getSmtpConfig(userId: string): Promise<SmtpConfig> {
   };
 }
 
+// Which mailbox outbound email leaves from. Both providers can be configured
+// at once, so the choice is stored explicitly (UserCredential.emailProvider)
+// rather than inferred from what happens to be set up — connecting Outlook to
+// try it must not silently change the sender on cold emails.
+export type SenderConfig =
+  | { provider: "smtp"; address: string; fromName: string; smtp: SmtpConfig }
+  | { provider: "microsoft"; address: string; fromName: string };
+
+export interface MicrosoftAccount {
+  connected: boolean;
+  email: string | null;
+  displayName: string | null;
+  connectedAt: Date | null;
+}
+
+export async function getMicrosoftAccount(userId: string): Promise<MicrosoftAccount> {
+  const cred = await prisma.userCredential.findUnique({ where: { userId } });
+  return {
+    connected: Boolean(cred?.msRefreshTokenEnc && cred?.msEmail),
+    email: cred?.msEmail ?? null,
+    displayName: cred?.msDisplayName ?? null,
+    connectedAt: cred?.msConnectedAt ?? null,
+  };
+}
+
+export async function getSenderConfig(userId: string): Promise<SenderConfig> {
+  const cred = await prisma.userCredential.findUnique({ where: { userId } });
+
+  if (cred?.emailProvider === "microsoft") {
+    if (!cred.msRefreshTokenEnc || !cred.msEmail) {
+      throw new ApiUserError(
+        "Your Outlook account isn't connected — reconnect it in Settings → Credentials.",
+        400,
+        "no_smtp"
+      );
+    }
+    return {
+      provider: "microsoft",
+      address: cred.msEmail,
+      fromName: cred.msDisplayName ?? cred.msEmail,
+    };
+  }
+
+  const smtp = await getSmtpConfig(userId);
+  return { provider: "smtp", address: smtp.user, fromName: smtp.fromName, smtp };
+}
+
+// Display-only: the address mail would actually leave from right now, or null
+// if the selected provider isn't usable yet. Resolves through getSenderConfig
+// so the UI can never disagree with what sendEmail will do — but swallows the
+// error, because "no sender configured" is a label, not a failure, on a screen
+// that is merely showing the user where their email will come from.
+export async function getSenderAddressOrNull(userId: string): Promise<string | null> {
+  try {
+    return (await getSenderConfig(userId)).address;
+  } catch {
+    return null;
+  }
+}
+
 export interface CredentialUpdate {
   deepseekKey?: string | null; // undefined = leave, null = clear, string = set
   llmProvider?: string | null;
@@ -110,6 +170,7 @@ export interface CredentialUpdate {
   smtpUser?: string | null;
   smtpPass?: string | null;
   smtpFromName?: string | null;
+  emailProvider?: string | null;
 }
 
 export async function setCredentials(userId: string, update: CredentialUpdate) {
@@ -139,6 +200,9 @@ export async function setCredentials(userId: string, update: CredentialUpdate) {
     if (update[k] !== undefined) data[k] = update[k] || null;
   }
   if (update.smtpPort !== undefined) data.smtpPort = update.smtpPort ?? null;
+  if (update.emailProvider !== undefined) {
+    data.emailProvider = update.emailProvider === "microsoft" ? "microsoft" : "smtp";
+  }
 
   return prisma.userCredential.upsert({
     where: { userId },

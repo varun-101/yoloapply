@@ -38,7 +38,7 @@ function ColdEmailInner() {
       .catch(() => setHasGenericResume(false));
     fetch("/api/settings/credentials")
       .then((r) => r.json())
-      .then((d) => setFromAddress(d?.smtpUser ?? null))
+      .then((d) => setFromAddress(d?.senderAddress ?? null))
       .catch(() => {});
   }, []);
 

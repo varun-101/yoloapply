@@ -23,6 +23,11 @@ interface CredStatus {
   smtpUser: string | null;
   smtpFromName: string | null;
   smtpPassSet: boolean;
+  emailProvider: string;
+  microsoftAvailable: boolean;
+  microsoftConnected: boolean;
+  microsoftEmail: string | null;
+  microsoftDisplayName: string | null;
   extensionTokenPrefix: string | null;
 }
 
@@ -87,6 +92,20 @@ export default function CredentialsSettings() {
     load();
   }, [load]);
 
+  // The Outlook connect flow comes back as a full-page redirect carrying its
+  // outcome in the query string (see api/oauth/microsoft/callback). Read it
+  // from window.location rather than useSearchParams — no Suspense boundary
+  // needed — then strip it so a refresh doesn't replay a stale banner.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("msConnected");
+    const failed = params.get("msError");
+    if (!connected && !failed) return;
+    if (connected) setMsg(`Outlook connected — ${connected}.`);
+    if (failed) setErr(failed);
+    window.history.replaceState({}, "", window.location.pathname);
+  }, []);
+
   async function put(body: Record<string, unknown>, busyKey: string, okMsg: string) {
     setBusy(busyKey);
     setErr(null);
@@ -116,7 +135,25 @@ export default function CredentialsSettings() {
       const res = await fetch("/api/settings/smtp-test", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Test send failed");
-      setMsg(`Test email sent to ${data.to} — check the inbox.`);
+      const via = data.provider === "microsoft" ? "Outlook" : "SMTP";
+      setMsg(`Test email sent to ${data.to} via ${via} — check the inbox.`);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function disconnectOutlook() {
+    if (!confirm("Disconnect Outlook? Sending falls back to your SMTP account.")) return;
+    setBusy("microsoft");
+    setErr(null);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/settings/microsoft", { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json()).error ?? "Disconnect failed");
+      setMsg("Outlook disconnected.");
+      await load();
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -167,6 +204,13 @@ export default function CredentialsSettings() {
       </div>
     );
   }
+
+  // Whether the sender the user actually selected can send right now — the
+  // other one being configured doesn't help.
+  const activeSenderReady =
+    status.emailProvider === "microsoft"
+      ? status.microsoftConnected
+      : status.smtpPassSet && !!status.smtpUser;
 
   return (
     <div className="space-y-4">
@@ -432,19 +476,108 @@ export default function CredentialsSettings() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
-            <Mail className="h-4 w-4" /> Outbound email (SMTP)
+            <Mail className="h-4 w-4" /> Outbound email
           </CardTitle>
-          {status.smtpPassSet && status.smtpUser ? (
-            <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">configured</Badge>
+          {activeSenderReady ? (
+            <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
+              sending via {status.emailProvider === "microsoft" ? "Outlook" : "SMTP"}
+            </Badge>
           ) : (
             <Badge className="bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">not set</Badge>
           )}
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Cold emails send from YOUR address. For Gmail: enable 2-step verification, then create
-            an App Password (Google Account → Security → App passwords) and paste it here.
+            Cold emails send from YOUR address, never a shared sender. Connect Outlook in one click,
+            or use any SMTP account with an app password.
           </p>
+
+          <Field label="Send from">
+            <div className="flex flex-wrap gap-2">
+              {[
+                { value: "smtp", label: "SMTP", enabled: true },
+                { value: "microsoft", label: "Outlook", enabled: status.microsoftConnected },
+              ].map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  disabled={!p.enabled || busy !== null}
+                  onClick={() =>
+                    put({ emailProvider: p.value }, "provider", `Sending from ${p.label} now.`)
+                  }
+                  className={`h-11 md:h-9 px-3 rounded-md border text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                    status.emailProvider === p.value
+                      ? "border-signal bg-signal/10 text-amber-900 dark:text-signal font-medium"
+                      : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-400"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {!status.microsoftConnected && (
+              <span className="mt-1 block text-xs text-slate-400 dark:text-slate-500">
+                Connect an Outlook account below to enable that option.
+              </span>
+            )}
+          </Field>
+
+          {status.microsoftAvailable && (
+            <div className="rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3 space-y-2.5">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+                    Outlook / Microsoft 365
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    {status.microsoftConnected ? (
+                      <>
+                        Connected as{" "}
+                        <span className="font-mono text-slate-700 dark:text-slate-200">
+                          {status.microsoftEmail}
+                        </span>
+                      </>
+                    ) : (
+                      "Sign in with Microsoft — no app password needed. Works with work/school and personal outlook.com accounts."
+                    )}
+                  </p>
+                </div>
+                {status.microsoftConnected ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 w-full md:w-auto"
+                    onClick={disconnectOutlook}
+                    disabled={busy !== null}
+                  >
+                    {busy === "microsoft" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                    Disconnect
+                  </Button>
+                ) : (
+                  <Button asChild size="sm" className="shrink-0 w-full md:w-auto">
+                    {/* Full navigation, not a fetch — the OAuth flow has to leave the page. */}
+                    <a href="/api/oauth/microsoft/start">
+                      <Plug className="h-4 w-4" /> Connect Outlook
+                    </a>
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="border-t border-slate-200 dark:border-slate-800 pt-3">
+            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+              SMTP
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              For Gmail: enable 2-step verification, then create an App Password (Google Account →
+              Security → App passwords) and paste it here.
+            </p>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="SMTP host">
               <Input value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} placeholder="smtp.gmail.com" />
@@ -491,7 +624,7 @@ export default function CredentialsSettings() {
               {busy === "smtp" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               Save SMTP
             </Button>
-            <Button variant="outline" onClick={sendTest} disabled={busy !== null || !status.smtpPassSet}>
+            <Button variant="outline" onClick={sendTest} disabled={busy !== null || !activeSenderReady}>
               {busy === "smtp-test" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
               Send test email
             </Button>

@@ -133,6 +133,21 @@ model UserCredential {
   smtpPassEnc      String?
   smtpFromName     String?
 
+  // Which mailbox outbound email leaves from. Explicit, never inferred: both
+  // can be configured at once and connecting Outlook must not silently change
+  // the sender on cold emails already in flight.
+  emailProvider String @default("smtp") // "smtp" | "microsoft"
+
+  // Outlook / Microsoft 365 connection (OAuth, Microsoft Graph sendMail).
+  // The refresh token is the long-lived secret and rotates on every use.
+  msRefreshTokenEnc String?
+  msAccessTokenEnc  String?
+  msTokenExpiresAt  DateTime?
+  msEmail           String? // the connected mailbox — not secret, shown in Settings
+  msDisplayName     String?
+  msConnectedAt     DateTime?
+  msScopes          String? // granted scopes, so a future scope change can spot stale grants
+
   extensionTokenHash   String?  @unique // sha256 hex of the full "yolo_…" token
   extensionTokenPrefix String? // first chars, display only
   updatedAt            DateTime @updatedAt
