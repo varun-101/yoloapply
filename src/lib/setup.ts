@@ -9,7 +9,7 @@ export interface SetupStatus {
   projects: boolean;
   search: boolean; // at least one location keyword saved
   llmKey: boolean;
-  smtp: boolean;
+  smtp: boolean; // "outbound email works" — either sender, whichever is selected
   genericResume: boolean;
   complete: boolean;
 }
@@ -24,7 +24,15 @@ export async function getSetupStatus(userId: string): Promise<SetupStatus> {
     }),
     prisma.userCredential.findUnique({
       where: { userId },
-      select: { deepseekKeyEnc: true, smtpHost: true, smtpUser: true, smtpPassEnc: true },
+      select: {
+        deepseekKeyEnc: true,
+        smtpHost: true,
+        smtpUser: true,
+        smtpPassEnc: true,
+        emailProvider: true,
+        msRefreshTokenEnc: true,
+        msEmail: true,
+      },
     }),
     prisma.storedFile.findFirst({
       where: { userId, applicationId: null, kind: "generic_resume" },
@@ -37,7 +45,13 @@ export async function getSetupStatus(userId: string): Promise<SetupStatus> {
     projects: projectCount > 0,
     search: (prefs?.locationKeywords.length ?? 0) > 0,
     llmKey: !!cred?.deepseekKeyEnc,
-    smtp: !!cred?.smtpHost && !!cred.smtpUser && !!cred.smtpPassEnc,
+    // Mirrors getSenderConfig: only the SELECTED provider counts, so a
+    // connected Outlook account clears the checklist item and an unusable one
+    // still flags it — having the other provider configured doesn't help.
+    smtp:
+      cred?.emailProvider === "microsoft"
+        ? !!cred.msRefreshTokenEnc && !!cred.msEmail
+        : !!cred?.smtpHost && !!cred.smtpUser && !!cred.smtpPassEnc,
     genericResume: !!genericResume,
   };
   return { ...status, complete: Object.values(status).every(Boolean) };

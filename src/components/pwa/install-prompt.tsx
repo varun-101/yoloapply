@@ -2,45 +2,24 @@
 import { useCallback, useEffect, useState } from "react";
 import { Download, Share, SquarePlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { usePwaInstall } from "./use-install";
 
 // "Add to home screen", handled for both platforms:
 //
-//  - Android / desktop Chromium fires `beforeinstallprompt`, which we stash and
-//    replay when the user taps Install. It only fires once the install criteria
-//    are met (manifest + service worker + https), so this banner simply never
-//    appears where installing is impossible.
+//  - Android / desktop Chromium fires `beforeinstallprompt`, which usePwaInstall
+//    stashes and we replay when the user taps Install. It only fires once the
+//    install criteria are met (manifest + service worker + https), so this
+//    banner simply never appears where installing is impossible.
 //  - iOS has no such event: Safari installs only through Share → Add to Home
 //    Screen. There is no API to trigger or even detect eligibility, so we show
 //    the instructions instead — that's the whole reason for the platform split.
 //
 // Dismissal is snoozed, not permanent: nagging is worse than a second ask.
+// Settings → App offers the same install with no snooze, for anyone who
+// dismissed this and changed their mind.
 
 const SNOOZE_KEY = "yoloapply:install-dismissed-at";
 const SNOOZE_MS = 14 * 24 * 60 * 60 * 1000;
-
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
-}
-
-function isStandalone(): boolean {
-  if (typeof window === "undefined") return false;
-  return (
-    window.matchMedia("(display-mode: standalone)").matches ||
-    // iOS Safari's own flag — it does not implement display-mode: standalone.
-    (window.navigator as Navigator & { standalone?: boolean }).standalone === true
-  );
-}
-
-function isIos(): boolean {
-  if (typeof window === "undefined") return false;
-  const ua = window.navigator.userAgent;
-  return (
-    /iPad|iPhone|iPod/.test(ua) ||
-    // iPadOS 13+ reports as a Mac; the touch points give it away.
-    (/Macintosh/.test(ua) && window.navigator.maxTouchPoints > 1)
-  );
-}
 
 function snoozed(): boolean {
   try {
@@ -52,34 +31,23 @@ function snoozed(): boolean {
 }
 
 export function InstallPrompt() {
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
-  const [showIosHelp, setShowIosHelp] = useState(false);
+  const { canInstall, installed, standalone, ios, ready, install } = usePwaInstall();
   const [hidden, setHidden] = useState(false);
+  const [isSnoozed, setIsSnoozed] = useState(true); // assume snoozed until checked
 
   useEffect(() => {
-    if (isStandalone() || snoozed()) return;
+    setIsSnoozed(snoozed());
+  }, []);
 
-    const onBeforeInstall = (e: Event) => {
-      e.preventDefault(); // keep Chrome's mini-infobar out of the way
-      setDeferred(e as BeforeInstallPromptEvent);
-    };
-    const onInstalled = () => {
-      setDeferred(null);
-      setHidden(true);
+  useEffect(() => {
+    if (installed) {
       try {
         window.localStorage.removeItem(SNOOZE_KEY);
       } catch {
         /* private mode */
       }
-    };
-    window.addEventListener("beforeinstallprompt", onBeforeInstall);
-    window.addEventListener("appinstalled", onInstalled);
-    if (isIos()) setShowIosHelp(true);
-    return () => {
-      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
-      window.removeEventListener("appinstalled", onInstalled);
-    };
-  }, []);
+    }
+  }, [installed]);
 
   const dismiss = useCallback(() => {
     setHidden(true);
@@ -90,16 +58,13 @@ export function InstallPrompt() {
     }
   }, []);
 
-  const install = useCallback(async () => {
-    if (!deferred) return;
-    await deferred.prompt();
-    await deferred.userChoice;
-    // The event is single-use whichever way they answered.
-    setDeferred(null);
+  const onInstall = useCallback(async () => {
+    await install();
     setHidden(true);
-  }, [deferred]);
+  }, [install]);
 
-  if (hidden || (!deferred && !showIosHelp)) return null;
+  if (!ready || hidden || isSnoozed || standalone || installed) return null;
+  if (!canInstall && !ios) return null;
 
   // text-left is explicit: the banner can float over a centered page. It also
   // sits above the mobile tab bar; on md+ there is no bar to clear.
@@ -117,7 +82,7 @@ export function InstallPrompt() {
           <div className="font-display text-sm font-semibold text-slate-900 dark:text-white">
             Install YOLOapply
           </div>
-          {deferred ? (
+          {canInstall ? (
             <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
               Keep your pipeline one tap away, full screen, no browser chrome.
             </p>
@@ -130,8 +95,8 @@ export function InstallPrompt() {
               <span className="font-medium text-slate-700 dark:text-slate-200">Add to Home Screen</span>
             </p>
           )}
-          {deferred && (
-            <Button size="sm" className="mt-2.5" onClick={install}>
+          {canInstall && (
+            <Button size="sm" className="mt-2.5" onClick={onInstall}>
               <Download className="h-3.5 w-3.5" />
               Install
             </Button>

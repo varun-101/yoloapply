@@ -2,17 +2,7 @@ import { chatJson, deAi } from "./llm";
 import { getProfile, CandidateProfile } from "./profile";
 import { getProjectBank } from "./projectBank";
 import { getLlmConfig } from "./credentials";
-
-const SYSTEM = `You write tailored, sincere cover letters for a software-engineering candidate. The letter must be specific, confident, and grounded ONLY in the candidate's real experience and projects — never fabricate employers, metrics, technologies, or claims.
-
-Style:
-- 3 short paragraphs: (1) why this role/company and a one-line hook, (2) the strongest 1-2 proof points from the candidate's real work mapped to the JD, (3) a concise close with a call to action.
-- ~220-320 words total. No purple prose, no "I am writing to apply", no clichés like "team player" or "fast-paced environment".
-- Plain, human, direct. First person.
-- CRITICAL — write like a person, not an AI. Do NOT use em dashes or en dashes (the long "—" / "–" characters). Use commas, periods, or parentheses instead. Avoid AI tells: don't overuse "moreover", "furthermore", "leverage", "passionate", "delve", or triadic lists ("X, Y, and Z" stacked repeatedly). Vary sentence length. Prefer simple punctuation.
-
-Output STRICT JSON only:
-{ "salutation": "Dear Hiring Manager,", "paragraphs": ["...", "...", "..."], "closing": "Sincerely," }`;
+import { systemFor } from "./prompts";
 
 export interface CoverLetterDraft {
   salutation: string;
@@ -27,10 +17,11 @@ interface Input {
 }
 
 export async function generateCoverLetter(userId: string, input: Input): Promise<CoverLetterDraft> {
-  const [profile, projectBank, llmCfg] = await Promise.all([
+  const [profile, projectBank, llmCfg, system] = await Promise.all([
     getProfile(userId),
     getProjectBank(userId),
     getLlmConfig(userId),
+    systemFor(userId, "coverLetter"),
   ]);
   const candidate = {
     name: profile.name,
@@ -67,7 +58,7 @@ Write the cover letter per the schema. Pick the proof points that best match THI
 
   const draft = await chatJson<CoverLetterDraft>({
     ...llmCfg,
-    system: SYSTEM,
+    system,
     user: userPrompt,
     maxTokens: 6144,
     temperature: 0.6,

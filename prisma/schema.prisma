@@ -28,6 +28,7 @@ model User {
   profile            UserProfile?
   searchPref         SearchPreference?
   credential         UserCredential?
+  promptSetting      UserPromptSetting?
   projects           Project[]
   applications       Application[]
   contacts           Contact[]
@@ -132,9 +133,41 @@ model UserCredential {
   smtpPassEnc      String?
   smtpFromName     String?
 
+  // Which mailbox outbound email leaves from. Explicit, never inferred: both
+  // can be configured at once and connecting Outlook must not silently change
+  // the sender on cold emails already in flight.
+  emailProvider String @default("smtp") // "smtp" | "microsoft"
+
+  // Outlook / Microsoft 365 connection (OAuth, Microsoft Graph sendMail).
+  // The refresh token is the long-lived secret and rotates on every use.
+  msRefreshTokenEnc String?
+  msAccessTokenEnc  String?
+  msTokenExpiresAt  DateTime?
+  msEmail           String? // the connected mailbox — not secret, shown in Settings
+  msDisplayName     String?
+  msConnectedAt     DateTime?
+  msScopes          String? // granted scopes, so a future scope change can spot stale grants
+
   extensionTokenHash   String?  @unique // sha256 hex of the full "yolo_…" token
   extensionTokenPrefix String? // first chars, display only
   updatedAt            DateTime @updatedAt
+}
+
+// Per-user writing instructions layered onto the built-in system prompts
+// (src/lib/prompts.ts). Free text, never a replacement for the base prompt —
+// the composer appends these so the JSON contract and the no-fabrication rule
+// always survive whatever the user types.
+model UserPromptSetting {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  voice       String? // applies to every writing surface below
+  resume      String?
+  coldEmail   String?
+  coverLetter String?
+  answers     String?
+  updatedAt   DateTime @updatedAt
 }
 
 // Metadata for files living in the Supabase Storage bucket

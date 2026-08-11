@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireUser, apiError } from "@/lib/auth";
-import { setCredentials } from "@/lib/credentials";
+import { setCredentials, getSenderAddressOrNull } from "@/lib/credentials";
 import { decryptSecret } from "@/lib/crypto";
+import { microsoftConfigured } from "@/lib/microsoft/oauth";
 
 // BYO credentials: the user's own DeepSeek key and SMTP (Gmail app password).
 // Secrets are write-only — GET returns presence + a last-4 hint, never the
@@ -39,6 +40,17 @@ export async function GET(req: NextRequest) {
       smtpUser: cred?.smtpUser ?? null,
       smtpFromName: cred?.smtpFromName ?? null,
       smtpPassSet: !!cred?.smtpPassEnc,
+      emailProvider: cred?.emailProvider ?? "smtp",
+      // The address mail actually leaves from, resolved through the same
+      // getSenderConfig that sendEmail uses — so surfaces like the cold-email
+      // composer can show the selected sender instead of guessing at smtpUser.
+      senderAddress: await getSenderAddressOrNull(user.id),
+      // Whether the operator has set MICROSOFT_* at all — the UI hides the
+      // Connect button entirely rather than offering a flow that must fail.
+      microsoftAvailable: microsoftConfigured(),
+      microsoftConnected: !!(cred?.msRefreshTokenEnc && cred?.msEmail),
+      microsoftEmail: cred?.msEmail ?? null,
+      microsoftDisplayName: cred?.msDisplayName ?? null,
       extensionTokenPrefix: cred?.extensionTokenPrefix ?? null,
     });
   } catch (e) {
@@ -58,6 +70,7 @@ interface CredentialsBody {
   smtpUser?: string | null;
   smtpPass?: string | null;
   smtpFromName?: string | null;
+  emailProvider?: string | null;
 }
 
 export async function PUT(req: NextRequest) {
@@ -76,6 +89,7 @@ export async function PUT(req: NextRequest) {
       smtpUser: body.smtpUser,
       smtpPass: body.smtpPass,
       smtpFromName: body.smtpFromName,
+      emailProvider: body.emailProvider,
     });
     return NextResponse.json({ ok: true });
   } catch (e) {
