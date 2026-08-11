@@ -25,8 +25,9 @@ function buildZip(): Buffer {
   }
   const zip = new AdmZip();
   zip.addLocalFolder(EXTENSION_DIR, ROOT_FOLDER);
-  cachedZip = zip.toBuffer();
-  return cachedZip;
+  const built = zip.toBuffer();
+  cachedZip = built;
+  return built;
 }
 
 export async function GET(req: NextRequest) {

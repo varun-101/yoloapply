@@ -7,6 +7,8 @@
 export type ContactSource =
   | "lead" // contactEmail already on the JobLead (HN posts often carry one)
   | "apollo" // Apollo people-DB: who works there by title (+ verified email)
+  | "signalhire"
+  | "manual"
   | "site" // company website scrape (/about, /team, /contact, footer)
   | "github" // GitHub org members' public profile emails
   | "hn" // surfaced via the HN lane's contact email
@@ -16,9 +18,13 @@ export type ContactSource =
 
 export interface RawCandidate {
   name?: string;
+  phone?: string;
   title?: string;
   email?: string; // may be absent — a person located but address not yet resolved
   linkedinUrl?: string;
+  location?: string;
+  providerPersonId?: string;
+  contactStatus?: "not_requested" | "resolving" | "resolved" | "failed";
   source: ContactSource;
   confidence: number; // 0..1, lane's own confidence in the EMAIL (0 when no email)
   verified?: boolean; // address confirmed real (published / provider-verified)
@@ -29,14 +35,21 @@ export interface LaneResult {
   source: ContactSource;
   candidates: RawCandidate[];
   error?: string;
+  status?: "ok" | "not_configured" | "plan_required" | "quota_exhausted" | "auth_error" | "rate_limited" | "error";
+  creditsRemaining?: string;
 }
 
 // A merged, ranked candidate as persisted to DiscoveredContact and returned to the UI.
 export interface RankedContact {
+  id?: string;
   name: string | null;
+  phone: string | null;
   title: string | null;
   email: string | null;
   linkedinUrl: string | null;
+  location: string | null;
+  providerPersonId: string | null;
+  contactStatus: string;
   source: ContactSource;
   sources: string | null; // comma-joined when several lanes agreed
   confidence: number;
@@ -50,18 +63,15 @@ export interface RankedContact {
 // cold-email target for an early-career SWE: a founder/eng-lead reply is gold; a
 // recruiter is a solid, legitimate target too.
 export const TARGET_TITLES = [
-  "founder",
-  "co-founder",
-  "ceo",
-  "cto",
-  "chief technology officer",
-  "vp engineering",
-  "head of engineering",
-  "director of engineering",
-  "engineering manager",
+  "technical recruiter",
+  "engineering recruiter",
+  "technical talent acquisition",
+  "talent acquisition partner",
+  "talent acquisition",
+  "recruiter",
   "head of talent",
   "head of people",
-  "technical recruiter",
-  "recruiter",
-  "talent acquisition",
+  "recruiting manager",
+  "people partner",
+  "hr manager",
 ];

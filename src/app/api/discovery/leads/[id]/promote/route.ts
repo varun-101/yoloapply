@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireUser, apiError } from "@/lib/auth";
+import { initializeApplicationWorkflow } from "@/lib/application-agent/workflow";
 
 // Creates an Application from a lead. Personalization is intentionally not done
 // here — the client chains POST /api/applications/[id]/personalize so this
@@ -37,6 +38,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           .join("\n") || null,
         status: "draft",
       },
+    });
+    await initializeApplicationWorkflow(app.id, {
+      hasJobDescription: typeof lead.jdText === "string" && lead.jdText.trim().length >= 50,
     });
     await prisma.event.create({
       data: {

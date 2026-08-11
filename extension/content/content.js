@@ -141,7 +141,7 @@
   }
   function fillableInputs() {
     return Array.from(document.querySelectorAll(
-      "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]):not([type=checkbox]):not([type=radio]), textarea, select"
+      "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]):not([type=checkbox]):not([type=radio]):not([type=file]), textarea, select"
     )).filter((el) => !el.disabled && !el.readOnly && isVisible(el));
   }
 
@@ -163,8 +163,8 @@
     if (/\b(current.?(company|employer|organi[sz]ation)|present.?(company|employer|organi[sz]ation)|employer|organi[sz]ation\W*\(current\))\b/.test(key))
       return profile.currentCompany;
     if (/\b(city|town)\b/.test(key)) return profile.city;
-    if (/\b(country|nationality)\b/.test(key)) return profile.country;
-    if (/\b(current.?location|location|address|where.?are.?you|where.?do.?you.?live|preferred.?location|present.?location|residential.?city|residential.?location)\b/.test(key))
+    if (/\bcountry\b/.test(key)) return profile.country;
+    if (/\b(current.?location|location|where.?are.?you|where.?do.?you.?live|preferred.?location|present.?location|residential.?city|residential.?location)\b/.test(key))
       return profile.location;
     if (/\b(school|university|college|institution|institute)\b/.test(key)) return profile.education?.school;
     if (/\b(degree|qualification|major|highest.?qualification)\b/.test(key)) return profile.education?.degree;
@@ -200,9 +200,17 @@
   }
 
   // ---- the fillers ----
+  function temporaryFieldId(el) {
+    if (!el.dataset.yoloId) {
+      el.dataset.yoloId = `yf_${Math.random().toString(36).slice(2, 10)}`;
+    }
+    return el.dataset.yoloId;
+  }
+
   async function fillBasicFields(profile) {
     const inputs = fillableInputs();
     let filled = 0;
+    const reports = [];
     const debugMisses = [];
     for (const el of inputs) {
       if (el.value && el.value.trim()) continue; // don't overwrite user edits
@@ -214,6 +222,14 @@
         setNativeValue(el, String(v));
         glow(el);
         filled++;
+        reports.push({
+          id: temporaryFieldId(el),
+          label: labelFor(el),
+          canonicalField: key,
+          status: "filled",
+          confidence: "high",
+          required: !!el.required,
+        });
       } else if (key.trim()) {
         debugMisses.push(key.trim().slice(0, 80));
       }
@@ -226,10 +242,18 @@
       if (v && selectByText(el, String(v))) {
         glow(el);
         filled++;
+        reports.push({
+          id: temporaryFieldId(el),
+          label: labelFor(el),
+          canonicalField: key,
+          status: "filled",
+          confidence: "high",
+          required: !!el.required,
+        });
       }
     }
     if (debugMisses.length) console.log("[YOLOapply] no-match fields:", debugMisses);
-    return filled;
+    return { filled, reports };
   }
 
   // Free-text questions that we can't fill from profile: send to backend LLM.
@@ -328,6 +352,7 @@
         placeholder: el.placeholder || "",
         autocomplete: el.getAttribute("autocomplete") || "",
         maxLength: el.maxLength > 0 ? el.maxLength : undefined,
+        required: !!el.required || el.getAttribute("aria-required") === "true",
         options: isSelect
           ? Array.from(el.options)
               .map((o) => o.text.trim())
@@ -335,13 +360,26 @@
           : undefined,
       });
     }
+    // Choice controls are discovered for the review report, but are never
+    // changed programmatically. Their semantics vary too much across ATSs.
+    for (const el of document.querySelectorAll('input[type="checkbox"], input[type="radio"]')) {
+      if (!isVisible(el) || el.disabled || el.checked) continue;
+      out.push({
+        id: temporaryFieldId(el),
+        label: labelFor(el),
+        name: el.name || "",
+        type: el.type,
+        required: !!el.required || el.getAttribute("aria-required") === "true",
+      });
+    }
     return out;
   }
 
   function applyMapped(mapped) {
     let filled = 0;
+    const reports = [];
     for (const m of mapped || []) {
-      if (!m || m.kind === "skip" || !m.value) continue;
+      if (!m) continue;
       let el;
       try {
         el = document.querySelector(`[data-yolo-id="${CSS.escape(m.id)}"]`);
@@ -349,6 +387,18 @@
         el = null;
       }
       if (!el) continue;
+      const report = {
+        id: m.id,
+        label: labelFor(el),
+        canonicalField: m.profileKey || undefined,
+        status: m.requiresHumanReview ? "needs_review" : m.kind === "skip" ? "skipped" : "filled",
+        confidence: m.confidence,
+        reason: m.reason,
+        sensitivity: m.sensitivity,
+        required: !!el.required || el.getAttribute("aria-required") === "true",
+      };
+      reports.push(report);
+      if (m.kind === "skip" || !m.value || m.requiresHumanReview) continue;
       if (el.tagName === "SELECT") {
         if (el.selectedIndex > 0 && el.value) continue;
         if (selectByText(el, String(m.value))) {
@@ -363,7 +413,7 @@
         filled++;
       }
     }
-    return filled;
+    return { filled, reports };
   }
 
   // ---- the widget ----
@@ -474,6 +524,8 @@
         <button class="yolo-btn yolo-secondary" data-act="answer">Answer open-ended questions (LLM)</button>
         <button class="yolo-btn yolo-secondary" data-act="cover">Cover letter (copy + upload)</button>
         <button class="yolo-btn yolo-secondary" data-act="resume">Upload resume PDF</button>
+        <div class="yolo-review yolo-hidden" data-role="review"></div>
+        <button class="yolo-btn yolo-secondary" data-act="submitted" disabled>I submitted â€” record it</button>
         <div class="yolo-status yolo-info yolo-hidden" data-role="status"></div>
         <div class="yolo-small">Tip: click the YOLOapply icon to open the popup.</div>
       </div>
@@ -495,6 +547,7 @@
         else if (act === "answer") await onAnswer();
         else if (act === "cover") await onCoverLetter();
         else if (act === "resume") await onResume();
+        else if (act === "submitted") await onRecordSubmitted();
       } catch (err) {
         showStatus("err", err?.message ?? String(err));
       } finally {
@@ -509,6 +562,81 @@
     statusEl.classList.remove("yolo-hidden", "yolo-ok", "yolo-err", "yolo-info");
     statusEl.classList.add(kind === "ok" ? "yolo-ok" : kind === "err" ? "yolo-err" : "yolo-info");
     statusEl.textContent = msg;
+  }
+
+  function atsProviderForPage() {
+    const host = location.hostname.toLowerCase();
+    if (host.includes("greenhouse.io") || host.includes("greenhouse.com")) return "greenhouse";
+    if (host.includes("lever.co")) return "lever";
+    if (host.includes("ashbyhq.com")) return "ashby";
+    if (host.includes("myworkdayjobs.com") || host.includes("workday.com")) return "workday";
+    return "generic";
+  }
+
+  function attachmentState() {
+    const files = Array.from(document.querySelectorAll('input[type="file"]'));
+    return {
+      resumeAttached: files.some((el) => /resume|cv/.test(fieldKey(el)) && (el.files?.length ?? 0) > 0),
+      coverLetterAttached: files.some((el) => /cover|letter/.test(fieldKey(el)) && (el.files?.length ?? 0) > 0),
+    };
+  }
+
+  function renderPreparationReport(report) {
+    const panel = widget?.querySelector('[data-role="review"]');
+    if (!panel || !report) return;
+    panel.replaceChildren();
+    panel.classList.remove("yolo-hidden");
+
+    const heading = document.createElement("strong");
+    heading.textContent = report.reviewCount
+      ? `${report.reviewCount} question${report.reviewCount === 1 ? "" : "s"} need review`
+      : "Application fields are ready for review";
+    panel.appendChild(heading);
+
+    const summary = document.createElement("div");
+    summary.className = "yolo-review-summary";
+    summary.textContent = `${report.filledCount} filled Â· ${report.skippedCount} safely skipped`;
+    panel.appendChild(summary);
+
+    const reviewFields = (report.fields || []).filter((field) => field.status === "needs_review").slice(0, 8);
+    if (reviewFields.length) {
+      const list = document.createElement("ul");
+      for (const field of reviewFields) {
+        const item = document.createElement("li");
+        item.textContent = field.label || "Unlabelled field";
+        if (field.reason) item.title = field.reason;
+        list.appendChild(item);
+      }
+      panel.appendChild(list);
+    }
+  }
+
+  async function reportPreparation(fields) {
+    const localReport = {
+      fields,
+      filledCount: fields.filter((field) => field.status === "filled").length,
+      reviewCount: fields.filter((field) => field.status === "needs_review").length,
+      skippedCount: fields.filter((field) => field.status === "skipped").length,
+      ...attachmentState(),
+    };
+    if (!state.applicationId) {
+      renderPreparationReport(localReport);
+      return localReport;
+    }
+    const response = await send({
+      type: "reportPreparation",
+      applicationId: state.applicationId,
+      payload: {
+        pageUrl: location.href,
+        pageTitle: document.title,
+        atsProvider: atsProviderForPage(),
+        fields,
+        ...attachmentState(),
+      },
+    });
+    if (!response?.ok) throw new Error(response?.error ?? "couldn't save preparation report");
+    renderPreparationReport(response.report);
+    return response.report;
   }
 
   function setDetection({ isJob, isForm }) {
@@ -560,6 +688,8 @@
     if (saveBtn) saveBtn.textContent = "Saved ✓ — re-save";
     const personalize = widget?.querySelector('[data-act="personalize"]');
     if (personalize) personalize.disabled = false;
+    const submitted = widget?.querySelector('[data-act="submitted"]');
+    if (submitted) submitted.disabled = false;
     void company;
     void role;
   }
@@ -585,9 +715,9 @@
     // Layer 2 — batch the still-empty fields to the LLM (handles any format,
     // selects, and open-ended questions in one request).
     const fields = collectEmptyFields();
-    let ai = 0;
+    let ai = { filled: 0, reports: [] };
     if (fields.length) {
-      showStatus("info", `Filled ${heur} instantly. Asking the LLM to map ${fields.length} more…`);
+      showStatus("info", `Filled ${heur.filled} instantly. Mapping ${fields.length} more safely…`);
       const job = state.job || {};
       const resp = await send({
         type: "autofillMap",
@@ -603,11 +733,17 @@
       ai = applyMapped(resp.fields);
     }
 
-    const total = heur + ai;
-    if (total === 0) {
-      showStatus("err", "Couldn't fill anything here. Check the console for the fields we saw.");
+    const total = heur.filled + ai.filled;
+    const report = await reportPreparation([...heur.reports, ...ai.reports]);
+    if (report.reviewCount > 0) {
+      showStatus(
+        "info",
+        `Filled ${total} field${total === 1 ? "" : "s"}. Review ${report.reviewCount} highlighted question${report.reviewCount === 1 ? "" : "s"}; nothing was submitted.`
+      );
+    } else if (total === 0) {
+      showStatus("info", "No empty supported fields remained. Nothing was submitted.");
     } else {
-      showStatus("ok", `Filled ${total} field${total === 1 ? "" : "s"} (${heur} instant, ${ai} via LLM).`);
+      showStatus("ok", `Filled ${total} field${total === 1 ? "" : "s"} (${heur.filled} instant, ${ai.filled} mapped). Review the form before submitting.`);
     }
   }
 
@@ -644,7 +780,68 @@
   async function onResume() {
     showStatus("info", "Uploading resume PDF…");
     const n = await uploadResume(state.applicationId);
+    if (n && state.applicationId) {
+      const response = await send({
+        type: "reportPreparation",
+        applicationId: state.applicationId,
+        payload: {
+          pageUrl: location.href,
+          pageTitle: document.title,
+          atsProvider: atsProviderForPage(),
+          resumeAttached: true,
+        },
+      });
+      if (response?.report) renderPreparationReport(response.report);
+    }
     showStatus(n ? "ok" : "err", n ? `Uploaded into ${n} input${n === 1 ? "" : "s"}.` : "Couldn't find a resume file input.");
+  }
+
+  function submissionEvidence() {
+    const text = pageText().slice(0, 12000);
+    const confirmationMatch = text.match(
+      /(?:thank you for applying|application (?:has been )?(?:received|submitted)|successfully submitted|submission confirmed)/i
+    );
+    const numberMatch = text.match(/(?:confirmation|application|reference)\s*(?:number|id|#)\s*[:#-]?\s*([A-Z0-9-]{4,40})/i);
+    let confirmationText = "";
+    if (confirmationMatch?.index !== undefined) {
+      confirmationText = text.slice(Math.max(0, confirmationMatch.index - 80), confirmationMatch.index + 320);
+    }
+    return {
+      pageTitle: document.title,
+      confirmationText,
+      confirmationNumber: numberMatch?.[1] || "",
+    };
+  }
+
+  async function onRecordSubmitted() {
+    if (!state.applicationId) {
+      showStatus("err", "Save the job before recording its submission.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Confirm that you personally reviewed the form and submitted this application. YOLOapply will only record the result."
+    );
+    if (!confirmed) {
+      showStatus("info", "Submission was not recorded.");
+      return;
+    }
+    showStatus("info", "Recording submission evidence…");
+    const response = await send({
+      type: "recordSubmission",
+      applicationId: state.applicationId,
+      payload: {
+        confirmation: "user_confirmed_submission",
+        pageUrl: location.href,
+        evidence: submissionEvidence(),
+      },
+    });
+    if (!response?.ok) throw new Error(response?.error ?? "couldn't record submission");
+    const button = widget?.querySelector('[data-act="submitted"]');
+    if (button) {
+      button.textContent = "Submission recorded ✓";
+      button.disabled = true;
+    }
+    showStatus("ok", response.alreadyRecorded ? "Submission was already recorded." : "Submission recorded on the application timeline.");
   }
 
   async function onCoverLetter() {
@@ -662,6 +859,19 @@
     const filled = fillCoverLetterTextarea(r.text || "");
     // Upload the PDF into a cover-letter file slot if present.
     const uploaded = await uploadCoverLetter(state.applicationId);
+    if (uploaded) {
+      const response = await send({
+        type: "reportPreparation",
+        applicationId: state.applicationId,
+        payload: {
+          pageUrl: location.href,
+          pageTitle: document.title,
+          atsProvider: atsProviderForPage(),
+          coverLetterAttached: true,
+        },
+      });
+      if (response?.report) renderPreparationReport(response.report);
+    }
 
     const bits = [];
     if (filled) bits.push("filled the cover-letter field");
@@ -775,6 +985,7 @@
       else if (act === "answer") await onAnswer();
       else if (act === "cover") await onCoverLetter();
       else if (act === "resume") await onResume();
+      else if (act === "submitted") await onRecordSubmitted();
       else throw new Error(`unknown action: ${act}`);
       return { ok: true };
     } catch (err) {

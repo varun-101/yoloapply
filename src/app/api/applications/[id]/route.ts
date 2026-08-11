@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireUser, apiError } from "@/lib/auth";
+import { cancelPendingFollowUpsForApplication } from "@/lib/application-agent/follow-up";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -11,6 +12,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         events: { orderBy: { createdAt: "desc" } },
         contacts: true,
         emails: true,
+        tasks: true,
+        analysis: true,
         files: { select: { id: true, kind: true, filename: true, size: true, updatedAt: true } },
       },
     });
@@ -49,6 +52,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       await prisma.event.create({
         data: { applicationId: app.id, type: "status_change", detail: String(data.status) },
       });
+      if (["replied", "interview", "offer", "rejected", "closed"].includes(String(data.status))) {
+        await cancelPendingFollowUpsForApplication(app.id, `Application status changed to ${String(data.status)}.`);
+      }
     }
     return NextResponse.json(app);
   } catch (e) {

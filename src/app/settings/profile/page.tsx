@@ -27,7 +27,22 @@ interface Extra {
   summary: string;
 }
 
+interface ApplicationAnswers {
+  workAuthorization: string;
+  sponsorship: string;
+  noticePeriod: string;
+  willingToRelocate: string;
+  currentLocation: string;
+}
+
 const EMPTY_EDUCATION: Education = { degree: "", school: "", cgpa: "", grad: "" };
+const EMPTY_APPLICATION_ANSWERS: ApplicationAnswers = {
+  workAuthorization: "",
+  sponsorship: "",
+  noticePeriod: "",
+  willingToRelocate: "",
+  currentLocation: "",
+};
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -61,6 +76,9 @@ export default function ProfileSettings() {
   const [education, setEducation] = useState<Education>(EMPTY_EDUCATION);
   const [experience, setExperience] = useState<Experience[]>([]);
   const [extras, setExtras] = useState<Extra[]>([]);
+  const [applicationAnswers, setApplicationAnswers] = useState<ApplicationAnswers>(EMPTY_APPLICATION_ANSWERS);
+  const [followUpDelayDays, setFollowUpDelayDays] = useState(5);
+  const [recruiterLocation, setRecruiterLocation] = useState("");
 
   useEffect(() => {
     fetch("/api/settings/profile")
@@ -106,6 +124,15 @@ export default function ProfileSettings() {
             })
           )
         );
+        setApplicationAnswers({
+          workAuthorization: p.applicationAnswers?.workAuthorization ?? "",
+          sponsorship: p.applicationAnswers?.sponsorship ?? "",
+          noticePeriod: p.applicationAnswers?.noticePeriod ?? "",
+          willingToRelocate: p.applicationAnswers?.willingToRelocate ?? "",
+          currentLocation: p.applicationAnswers?.currentLocation ?? "",
+        });
+        setFollowUpDelayDays(Math.min(30, Math.max(1, Number(p.followUpDelayDays) || 5)));
+        setRecruiterLocation(p.recruiterLocation ?? "");
       })
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
@@ -157,6 +184,9 @@ export default function ProfileSettings() {
               period: x.period || undefined,
               summary: x.summary || undefined,
             })),
+          applicationAnswers,
+          followUpDelayDays,
+          recruiterLocation,
         }),
       });
       const data = await res.json();
@@ -236,6 +266,73 @@ export default function ProfileSettings() {
           <Field label="Portfolio URL">
             <Input value={portfolio} onChange={(e) => setPortfolio(e.target.value)} placeholder="https://you.dev" />
           </Field>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Application answers</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            These values are reused only when you enter them explicitly. Missing answers stay empty and require review.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Current location">
+              <Input
+                value={applicationAnswers.currentLocation}
+                onChange={(e) => setApplicationAnswers({ ...applicationAnswers, currentLocation: e.target.value })}
+                placeholder="Mumbai, India"
+              />
+            </Field>
+            <Field label="Notice period">
+              <Input
+                value={applicationAnswers.noticePeriod}
+                onChange={(e) => setApplicationAnswers({ ...applicationAnswers, noticePeriod: e.target.value })}
+                placeholder="Immediate / 30 days"
+              />
+            </Field>
+            <Field label="Work authorization">
+              <Input
+                value={applicationAnswers.workAuthorization}
+                onChange={(e) => setApplicationAnswers({ ...applicationAnswers, workAuthorization: e.target.value })}
+                placeholder="Your exact answer"
+              />
+            </Field>
+            <Field label="Sponsorship">
+              <Input
+                value={applicationAnswers.sponsorship}
+                onChange={(e) => setApplicationAnswers({ ...applicationAnswers, sponsorship: e.target.value })}
+                placeholder="Your exact answer"
+              />
+            </Field>
+            <Field label="Willing to relocate">
+              <Input
+                value={applicationAnswers.willingToRelocate}
+                onChange={(e) => setApplicationAnswers({ ...applicationAnswers, willingToRelocate: e.target.value })}
+                placeholder="Yes / No / Depends on location"
+              />
+            </Field>
+            <Field label="Outreach follow-up delay" hint="A reviewable follow-up is scheduled after initial outreach; it is never sent automatically.">
+              <Input
+                type="number"
+                min={1}
+                max={30}
+                value={followUpDelayDays}
+                onChange={(e) => setFollowUpDelayDays(Math.min(30, Math.max(1, Number(e.target.value) || 1)))}
+              />
+            </Field>
+            <Field
+              label="Preferred recruiter location"
+              hint="Used to prioritize recruiters near your target market, for example India or Bengaluru, India."
+            >
+              <Input
+                value={recruiterLocation}
+                onChange={(e) => setRecruiterLocation(e.target.value)}
+                placeholder="India"
+              />
+            </Field>
+          </div>
         </CardContent>
       </Card>
 

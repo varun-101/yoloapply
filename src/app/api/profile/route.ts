@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
       education: profile.education,
       currentRole: profile.experience[0]?.title ?? "",
       currentCompany: profile.experience[0]?.company ?? "",
+      applicationAnswers: profile.applicationAnswers,
     });
   } catch (e) {
     return apiError(e);

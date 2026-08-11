@@ -1,5 +1,5 @@
 import { prisma } from "../db";
-import { getApolloKey, getSearchKey } from "../credentials";
+import { getApolloKey, getSearchKey, getSignalHireKey } from "../credentials";
 import { getLlmConfigOrNull } from "../credentials";
 import { resolveCompanyDomain, registrableDomain } from "./domain";
 import { hasMx, isPlausibleEmail } from "./verify";
@@ -9,8 +9,10 @@ import { fetchSiteContacts } from "./lanes/site";
 import { fetchGithubContacts } from "./lanes/github";
 import { fetchRoleInboxes } from "./lanes/roleInbox";
 import { fetchApolloContacts } from "./lanes/apollo";
+import { fetchSignalHireContacts } from "./lanes/signalhire";
 import { fetchPortfolioContacts } from "./lanes/portfolio";
 import type { LaneResult, RankedContact, RawCandidate } from "./types";
+import { createHash } from "crypto";
 
 // Orchestrates the contact-finder lanes. Mirrors the discovery pipeline's
 // guarantees (CLAUDE.md "robust long-running operations"):
@@ -33,6 +35,14 @@ export interface EnrichInput {
   domain?: string | null; // explicit override (skips resolution)
   leadEmails?: string[]; // emails already attached to the lead (HN contactEmail)
   force?: boolean;
+  searchLocation?: string | null;
+}
+
+export interface SourceDiagnostic {
+  found: number;
+  status?: string;
+  error?: string;
+  creditsRemaining?: string;
 }
 
 export interface EnrichStatus {
@@ -43,6 +53,8 @@ export interface EnrichStatus {
   error: string | null;
   enrichedAt: string | null;
   contacts: RankedContact[];
+  searchLocation: string | null;
+  sourceStats: Record<string, SourceDiagnostic>;
 }
 
 type EnrichGlobal = { __contactEnrich?: Map<string, Promise<void>> };
@@ -55,6 +67,16 @@ function normalizeDomain(raw: string): string {
   return registrableDomain(raw.replace(/^https?:\/\//, "").split("/")[0].trim().toLowerCase());
 }
 
+function normalizeLocation(value?: string | null): string | null {
+  return value?.trim().replace(/\s+/g, " ") || null;
+}
+
+function intentKey(userId: string, domain: string, location?: string | null): string {
+  return createHash("sha256")
+    .update(`${userId}|${domain}|${normalizeLocation(location)?.toLowerCase() ?? "global"}`)
+    .digest("hex");
+}
+
 function rowToStatus(
   row: {
     domain: string;
@@ -63,6 +85,8 @@ function rowToStatus(
     pattern: string | null;
     error: string | null;
     enrichedAt: Date | null;
+    searchLocation: string | null;
+    sourceStats: string | null;
   },
   contacts: RankedContact[]
 ): EnrichStatus {
@@ -73,21 +97,34 @@ function rowToStatus(
     pattern: row.pattern,
     error: row.error,
     enrichedAt: row.enrichedAt ? row.enrichedAt.toISOString() : null,
+    searchLocation: row.searchLocation,
+    sourceStats: (() => {
+      try {
+        return row.sourceStats ? (JSON.parse(row.sourceStats) as Record<string, SourceDiagnostic>) : {};
+      } catch {
+        return {};
+      }
+    })(),
     contacts,
   };
 }
 
-async function loadStatus(domain: string): Promise<EnrichStatus | null> {
+async function loadStatus(key: string): Promise<EnrichStatus | null> {
   const row = await prisma.companyContactCache.findUnique({
-    where: { domain },
+    where: { intentKey: key },
     include: { contacts: { orderBy: { rank: "desc" } } },
   });
   if (!row) return null;
   const contacts: RankedContact[] = row.contacts.map((c) => ({
+    id: c.id,
     name: c.name,
+    phone: c.phone,
     title: c.title,
     email: c.email,
     linkedinUrl: c.linkedinUrl,
+    location: c.location,
+    providerPersonId: c.providerPersonId,
+    contactStatus: c.contactStatus,
     source: c.source as RankedContact["source"],
     sources: c.sources,
     confidence: c.confidence,
@@ -101,8 +138,13 @@ async function loadStatus(domain: string): Promise<EnrichStatus | null> {
 
 // GET handler reads this — purely from the DB, so it works on any instance and
 // after a reload.
-export async function getEnrichStatusByDomain(domain: string): Promise<EnrichStatus | null> {
-  return loadStatus(normalizeDomain(domain));
+export async function getEnrichStatusByDomain(
+  domain: string,
+  userId: string,
+  searchLocation?: string | null
+): Promise<EnrichStatus | null> {
+  const normalized = normalizeDomain(domain);
+  return loadStatus(intentKey(userId, normalized, searchLocation));
 }
 
 // Kick-off used by POST. Resolves the domain, joins/serves a fresh-or-running
@@ -122,10 +164,14 @@ export async function startEnrich(input: EnrichInput): Promise<EnrichStatus> {
         "Couldn't determine the company's website domain. Add the company's site URL (e.g. in the application's JD URL) and try again.",
       enrichedAt: null,
       contacts: [],
+      searchLocation: normalizeLocation(input.searchLocation),
+      sourceStats: {},
     };
   }
   const domain = resolved.domain;
-  const existing = await loadStatus(domain);
+  const location = normalizeLocation(input.searchLocation);
+  const key = intentKey(input.userId, domain, location);
+  const existing = await loadStatus(key);
 
   const fresh =
     existing?.status === "completed" &&
@@ -138,33 +184,52 @@ export async function startEnrich(input: EnrichInput): Promise<EnrichStatus> {
   // Mark running synchronously so a concurrent GET/POST sees it (keeps prior
   // contacts visible until the new run replaces them).
   await prisma.companyContactCache.upsert({
-    where: { domain },
-    create: { domain, company: input.company, status: "running", startedAt: new Date() },
-    update: { status: "running", startedAt: new Date(), error: null, company: input.company },
+    where: { intentKey: key },
+    create: { domain, intentKey: key, ownerUserId: input.userId, searchLocation: location, company: input.company, status: "running", startedAt: new Date() },
+    update: { status: "running", startedAt: new Date(), error: null, company: input.company, searchLocation: location },
   });
 
   const m = inflight();
-  if (!m.has(domain)) {
-    const p = runEnrich(domain, input)
+  if (!m.has(key)) {
+    const p = runEnrich(key, domain, input)
       .catch(() => {})
-      .finally(() => m.delete(domain));
-    m.set(domain, p);
+      .finally(() => m.delete(key));
+    m.set(key, p);
   }
-  return (await loadStatus(domain))!;
+  return (await loadStatus(key))!;
 }
 
 // The actual lane fan-out + resolve + rank + persist. Updates the cache row to
 // completed/failed at the end so the outcome survives no client listening.
-async function runEnrich(domain: string, input: EnrichInput): Promise<void> {
-  const cache = await prisma.companyContactCache.findUnique({ where: { domain } });
+async function runEnrich(key: string, domain: string, input: EnrichInput): Promise<void> {
+  const cache = await prisma.companyContactCache.findUnique({ where: { intentKey: key } });
   if (!cache) return;
   try {
-    const [apolloKey, searchKey, llm] = await Promise.all([
+    const [apolloKey, signalhireKey, searchKey, llm] = await Promise.all([
       getApolloKey(input.userId),
+      getSignalHireKey(input.userId),
       getSearchKey(input.userId),
       getLlmConfigOrNull(input.userId),
     ]);
     const company = input.company;
+
+    // User-added LinkedIn profiles belong to this search intent and must survive
+    // a provider refresh, unlike replaceable lane output.
+    const manualCands: RawCandidate[] = (await prisma.discoveredContact.findMany({
+      where: { cacheId: cache.id, source: "manual" },
+    })).map((candidate) => ({
+      name: candidate.name ?? undefined,
+      title: candidate.title ?? undefined,
+      email: candidate.email ?? undefined,
+      phone: candidate.phone ?? undefined,
+      linkedinUrl: candidate.linkedinUrl ?? undefined,
+      location: candidate.location ?? undefined,
+      providerPersonId: candidate.providerPersonId ?? undefined,
+      source: "manual",
+      confidence: candidate.confidence,
+      verified: candidate.verified,
+      contactStatus: candidate.contactStatus as RawCandidate["contactStatus"],
+    }));
 
     // Emails already known from the lead are real, trusted addresses.
     const leadCands: RawCandidate[] = (input.leadEmails ?? [])
@@ -177,11 +242,14 @@ async function runEnrich(domain: string, input: EnrichInput): Promise<void> {
       fetchGithubContacts(company, domain),
       fetchRoleInboxes(domain),
       apolloKey
-        ? fetchApolloContacts(domain, company, apolloKey)
-        : Promise.resolve<LaneResult>({ source: "apollo", candidates: [] }),
+        ? fetchApolloContacts(domain, company, apolloKey, input.searchLocation)
+        : Promise.resolve<LaneResult>({ source: "apollo", candidates: [], status: "not_configured" }),
+      signalhireKey
+        ? fetchSignalHireContacts(company, signalhireKey, fetch, input.searchLocation)
+        : Promise.resolve<LaneResult>({ source: "signalhire", candidates: [], status: "not_configured" }),
     ]);
 
-    let all: RawCandidate[] = [...leadCands, ...lanes.flatMap((l) => l.candidates)];
+    let all: RawCandidate[] = [...manualCands, ...leadCands, ...lanes.flatMap((l) => l.candidates)];
 
     // Infer the company's email shape from any real (name,email) pairs we have,
     // so guesses for the rest of the company are far stronger than blind defaults.
@@ -194,7 +262,7 @@ async function runEnrich(domain: string, input: EnrichInput): Promise<void> {
     const nameOnly: RawCandidate[] = [];
     const seenNames = new Set<string>();
     for (const c of all) {
-      if (c.email || !c.name) continue;
+      if (c.email || !c.name || c.source === "apollo" || c.source === "signalhire" || c.source === "manual") continue;
       const key = c.name.toLowerCase().replace(/[^a-z]/g, "");
       if (!key || seenNames.has(key) || emailedNames.has(key)) continue;
       seenNames.add(key);
@@ -243,12 +311,20 @@ async function runEnrich(domain: string, input: EnrichInput): Promise<void> {
       }
     }
 
-    const ranked = mergeAndRank(all);
+    const ranked = mergeAndRank(all, input.searchLocation);
 
     // Per-lane stats for the UI (how many each contributed + any soft errors).
-    const stats: Record<string, { found: number; error?: string }> = {};
-    for (const l of lanes) stats[l.source] = { found: l.candidates.length, error: l.error };
+    const stats: Record<string, SourceDiagnostic> = {};
+    for (const l of lanes) {
+      stats[l.source] = {
+        found: l.candidates.length,
+        status: l.status ?? (l.error ? "error" : "ok"),
+        ...(l.error ? { error: l.error } : {}),
+        ...(l.creditsRemaining ? { creditsRemaining: l.creditsRemaining } : {}),
+      };
+    }
     stats.lead = { found: leadCands.length };
+    stats.manual = { found: manualCands.length, status: "ok" };
     if (searchKey) stats.portfolio = { found: all.filter((c) => c.source === "portfolio").length, error: portfolioError };
 
     // Replace this domain's discovered contacts atomically.
@@ -259,9 +335,13 @@ async function runEnrich(domain: string, input: EnrichInput): Promise<void> {
           data: {
             cacheId: cache.id,
             name: c.name,
+            phone: c.phone,
             title: c.title,
             email: c.email,
             linkedinUrl: c.linkedinUrl,
+            location: c.location,
+            providerPersonId: c.providerPersonId,
+            contactStatus: c.contactStatus,
             source: c.source,
             sources: c.sources,
             confidence: c.confidence,

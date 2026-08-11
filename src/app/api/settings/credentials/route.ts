@@ -30,6 +30,8 @@ export async function GET(req: NextRequest) {
       llmModel: cred?.llmModel ?? null,
       apolloKeySet: !!cred?.apolloKeyEnc,
       apolloLast4: last4(cred?.apolloKeyEnc),
+      signalhireKeySet: !!cred?.signalhireKeyEnc,
+      signalhireLast4: last4(cred?.signalhireKeyEnc),
       searchKeySet: !!cred?.searchKeyEnc,
       searchLast4: last4(cred?.searchKeyEnc),
       smtpHost: cred?.smtpHost ?? null,
@@ -49,6 +51,7 @@ interface CredentialsBody {
   llmProvider?: string | null;
   llmModel?: string | null;
   apolloKey?: string | null;
+  signalhireKey?: string | null;
   searchKey?: string | null;
   smtpHost?: string | null;
   smtpPort?: number | null;
@@ -66,6 +69,7 @@ export async function PUT(req: NextRequest) {
       llmProvider: body.llmProvider,
       llmModel: body.llmModel,
       apolloKey: body.apolloKey,
+      signalhireKey: body.signalhireKey,
       searchKey: body.searchKey,
       smtpHost: body.smtpHost,
       smtpPort: body.smtpPort,

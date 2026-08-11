@@ -7,14 +7,32 @@ import { isRoleInbox, normalizeEmail } from "./verify";
 export function seniorityRank(title: string | null | undefined): number {
   const t = (title ?? "").toLowerCase();
   if (!t) return 10;
-  if (/\b(founder|co-?founder|ceo|owner)\b/.test(t)) return 100;
-  if (/\b(cto|chief technology|vp eng|vp of eng|head of eng|director of eng)\b/.test(t)) return 90;
-  if (/\b(head of (talent|people|hr)|talent acquisition|recruit)/.test(t)) return 80;
-  if (/\b(engineering manager|eng manager|tech lead|team lead|staff engineer|principal)\b/.test(t)) return 70;
+  if (/technical recruiter|engineering recruiter/.test(t)) return 100;
+  if (/talent acquisition.*(engineering|technical)|engineering.*talent/.test(t)) return 95;
+  if (/\b(talent acquisition|recruiter|recruiting)\b/.test(t)) return 85;
+  if (/\b(head of (talent|people|hr)|people partner|hr manager)\b/.test(t)) return 70;
+  if (/\b(founder|co-?founder|ceo|owner|cto|chief technology)\b/.test(t)) return 55;
+  if (/\b(engineering manager|eng manager|head of eng|director of eng)\b/.test(t)) return 50;
   if (/\b(hr|people|talent)\b/.test(t)) return 65;
   if (/\b(cofounder|director|head of|vp)\b/.test(t)) return 75;
   if (/\b(engineer|developer|swe|sde)\b/.test(t)) return 40;
   return 30;
+}
+
+export function recruiterRelevanceRank(
+  title: string | null | undefined,
+  candidateLocation?: string | null,
+  preferredLocation?: string | null
+): number {
+  const base = seniorityRank(title);
+  const candidate = (candidateLocation ?? "").toLowerCase();
+  const preferred = (preferredLocation ?? "").toLowerCase().trim();
+  if (!candidate || !preferred) return base;
+  if (candidate.includes(preferred) || preferred.includes(candidate)) return base + 20;
+  const meaningfulTokens = preferred.split(/[^a-z0-9]+/).filter((token) => token.length > 2);
+  if (meaningfulTokens.some((token) => candidate.includes(token))) return base + 10;
+  if (/remote|global|worldwide/.test(candidate)) return base + 3;
+  return base;
 }
 
 // Composite sort score. Verified + addressable contacts always outrank guesses;
@@ -25,18 +43,20 @@ export function compositeRank(c: {
   confidence: number;
   verified: boolean;
   seniorityRank: number;
+  roleInbox?: boolean;
 }): number {
-  if (!c.email) return c.seniorityRank * 0.1; // emailless: tiny, seniority-ordered
-  const verifiedBoost = c.verified ? 1 : 0;
-  // weight: email-confidence dominates, then verified, then seniority.
-  return c.confidence * 100 + verifiedBoost * 40 + c.seniorityRank * 0.3;
+  if (c.roleInbox) return 5 + c.confidence * 10;
+  // Person relevance is primary. Contact quality is displayed independently
+  // and only breaks close ties, so a real recruiter without an unlocked email
+  // ranks above careers@ or jobs@.
+  return c.seniorityRank + (c.email ? c.confidence * 15 : 0) + (c.verified ? 10 : 0);
 }
 
 // Merge candidates from every lane into one ranked list. Dedupe by email
 // (lowercased); among same-email rows keep the strongest fields and union the
 // source labels + verified flag. Emailless people dedupe by normalized name so a
 // person found by both Apollo and GitHub doesn't appear twice.
-export function mergeAndRank(candidates: RawCandidate[]): RankedContact[] {
+export function mergeAndRank(candidates: RawCandidate[], preferredLocation?: string | null): RankedContact[] {
   const byEmail = new Map<string, RankedContact & { _sources: Set<string> }>();
   const byName = new Map<string, RankedContact & { _sources: Set<string> }>();
 
@@ -48,23 +68,31 @@ export function mergeAndRank(candidates: RawCandidate[]): RankedContact[] {
     if (!target) {
       return {
         name: c.name ?? null,
+        phone: c.phone ?? null,
         title: c.title ?? null,
         email,
         linkedinUrl: c.linkedinUrl ?? null,
+        location: c.location ?? null,
+        providerPersonId: c.providerPersonId ?? null,
+        contactStatus: c.contactStatus ?? (email ? "resolved" : "not_requested"),
         source: c.source,
         sources: null,
         confidence: c.confidence,
         verified: !!c.verified,
         verifyMethod: c.verifyMethod ?? null,
-        seniorityRank: seniorityRank(c.title),
+        seniorityRank: recruiterRelevanceRank(c.title, c.location, preferredLocation),
         rank: 0,
         _sources: new Set([c.source]),
       };
     }
     // Merge into the existing record, preferring richer/stronger values.
     target.name = target.name ?? c.name ?? null;
+    target.phone = target.phone ?? c.phone ?? null;
     target.title = target.title ?? c.title ?? null;
     target.linkedinUrl = target.linkedinUrl ?? c.linkedinUrl ?? null;
+    target.location = target.location ?? c.location ?? null;
+    target.providerPersonId = target.providerPersonId ?? c.providerPersonId ?? null;
+    if (c.contactStatus === "resolved") target.contactStatus = "resolved";
     target._sources.add(c.source);
     if (c.confidence > target.confidence) {
       target.confidence = c.confidence;
@@ -74,7 +102,7 @@ export function mergeAndRank(candidates: RawCandidate[]): RankedContact[] {
       target.verified = true;
       target.verifyMethod = c.verifyMethod ?? target.verifyMethod;
     }
-    target.seniorityRank = Math.max(target.seniorityRank, seniorityRank(c.title));
+    target.seniorityRank = Math.max(target.seniorityRank, recruiterRelevanceRank(c.title, c.location, preferredLocation));
     return target;
   };
 
@@ -105,13 +133,17 @@ export function mergeAndRank(candidates: RawCandidate[]): RankedContact[] {
     .map((m) => {
       // A role inbox is real but impersonal — cap its seniority contribution.
       if (m.email && isRoleInbox(m.email)) m.seniorityRank = Math.min(m.seniorityRank, 50);
-      const rank = compositeRank(m);
+      const rank = compositeRank({ ...m, roleInbox: !!m.email && isRoleInbox(m.email) });
       const sources = [...m._sources];
       return {
         name: m.name,
+        phone: m.phone,
         title: m.title,
         email: m.email,
         linkedinUrl: m.linkedinUrl,
+        location: m.location,
+        providerPersonId: m.providerPersonId,
+        contactStatus: m.contactStatus,
         source: m.source,
         sources: sources.length > 1 ? sources.join(",") : null,
         confidence: Math.min(1, m.confidence),

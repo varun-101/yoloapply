@@ -3,6 +3,57 @@ import { prisma } from "@/lib/db";
 import { requireUser, apiError } from "@/lib/auth";
 import { startEnrich, getEnrichStatusByDomain } from "@/lib/contacts/pipeline";
 import { resolveCompanyDomain } from "@/lib/contacts/domain";
+import {
+  failApplicationTask,
+  initializeApplicationWorkflow,
+  markApplicationTaskNeedsReview,
+  startApplicationTask,
+} from "@/lib/application-agent/workflow";
+import type { EnrichStatus } from "@/lib/contacts/pipeline";
+
+async function syncRecruiterTask(applicationId: string, status: EnrichStatus) {
+  await initializeApplicationWorkflow(applicationId);
+  const current = await prisma.applicationTask.findUnique({
+    where: { applicationId_key: { applicationId, key: "FIND_RECRUITER" } },
+  });
+
+  if (status.status === "running") {
+    if (current?.status !== "RUNNING") await startApplicationTask(applicationId, "FIND_RECRUITER");
+    return;
+  }
+  const people = status.contacts.filter((contact) => contact.source !== "role_inbox" && !!contact.name);
+  if (status.status === "completed" && people.length > 0) {
+    if (current?.status !== "NEEDS_REVIEW" && current?.status !== "SUCCESS") {
+      await markApplicationTaskNeedsReview(
+        applicationId,
+        "FIND_RECRUITER",
+        `${people.length} recruiter candidate${people.length === 1 ? "" : "s"} found; select one to continue.`,
+        { metadata: { domain: status.domain, candidateCount: people.length, searchLocation: status.searchLocation } }
+      );
+    }
+    return;
+  }
+  if (status.status === "completed" && people.length === 0) {
+    if (current?.status !== "FAILED") {
+      const blockedProvider = Object.values(status.sourceStats).find((source) => source.status === "quota_exhausted");
+      await failApplicationTask(applicationId, "FIND_RECRUITER", blockedProvider
+        ? `No recruiter people were found. A configured provider is out of credits or daily quota.`
+        : `No recruiter people were found for ${status.domain}.`, {
+        code: "no_recruiter_found",
+        metadata: { domain: status.domain },
+      });
+    }
+    return;
+  }
+  if (status.status === "failed" || status.status === "no_domain") {
+    if (current?.status !== "FAILED") {
+      await failApplicationTask(applicationId, "FIND_RECRUITER", status.error ?? "Recruiter discovery failed.", {
+        code: status.status,
+        metadata: status.domain ? { domain: status.domain } : undefined,
+      });
+    }
+  }
+}
 
 // "Find contacts" for cold email. POST kicks off (or joins) enrichment for the
 // company behind an application and returns the current status + any contacts;
@@ -33,16 +84,19 @@ export async function POST(req: NextRequest) {
     };
 
     let company: string = companyIn ?? "";
+    let searchLocation: string | null = null;
     const urls: (string | null | undefined)[] = [];
     const leadEmails: string[] = [];
 
     if (applicationId) {
       const app = await prisma.application.findFirst({
         where: { id: applicationId, userId: user.id },
-        select: { id: true, company: true, applyUrl: true, jdUrl: true },
+        select: { id: true, company: true, applyUrl: true, jdUrl: true, location: true },
       });
       if (!app) return NextResponse.json({ error: "application not found" }, { status: 404 });
       company = app.company;
+      const profile = await prisma.userProfile.findUnique({ where: { userId: user.id }, select: { recruiterLocation: true } });
+      searchLocation = profile?.recruiterLocation?.trim() || app.location?.trim() || null;
       urls.push(app.applyUrl, app.jdUrl);
       // The promoted lead often carries a real company URL + a founder email
       // (HN), both stronger signals than the apply URL.
@@ -67,7 +121,9 @@ export async function POST(req: NextRequest) {
       domain: domainIn ?? undefined,
       leadEmails,
       force: !!force,
+      searchLocation,
     });
+    if (applicationId) await syncRecruiterTask(applicationId, status);
     return NextResponse.json(status);
   } catch (e) {
     return apiError(e);
@@ -83,9 +139,22 @@ export async function GET(req: NextRequest) {
 
     // Fast path: poll by an already-resolved domain (no network resolution).
     if (domainParam) {
-      const status = await getEnrichStatusByDomain(domainParam);
+      let searchLocation: string | null = sp.get("searchLocation")?.trim() || null;
+      if (applicationId) {
+        const application = await prisma.application.findFirst({
+          where: { id: applicationId, userId: user.id },
+          select: { id: true, location: true },
+        });
+        if (!application) return NextResponse.json({ error: "application not found" }, { status: 404 });
+        const profile = await prisma.userProfile.findUnique({ where: { userId: user.id }, select: { recruiterLocation: true } });
+        searchLocation = profile?.recruiterLocation?.trim() || application.location?.trim() || null;
+      }
+      const status = await getEnrichStatusByDomain(domainParam, user.id, searchLocation);
+      if (status && applicationId) {
+        await syncRecruiterTask(applicationId, status);
+      }
       return NextResponse.json(
-        status ?? { domain: domainParam, status: "idle", company: "", pattern: null, error: null, enrichedAt: null, contacts: [] }
+        status ?? { domain: domainParam, status: "idle", company: "", pattern: null, error: null, enrichedAt: null, contacts: [], searchLocation, sourceStats: {} }
       );
     }
 
@@ -94,7 +163,7 @@ export async function GET(req: NextRequest) {
     if (applicationId) {
       const app = await prisma.application.findFirst({
         where: { id: applicationId, userId: user.id },
-        select: { company: true, applyUrl: true, jdUrl: true },
+        select: { company: true, applyUrl: true, jdUrl: true, location: true },
       });
       if (!app) return NextResponse.json({ error: "application not found" }, { status: 404 });
       const userLead = await prisma.userLead.findFirst({
@@ -105,12 +174,15 @@ export async function GET(req: NextRequest) {
         company: app.company,
         urls: [userLead?.jobLead?.url, app.applyUrl, app.jdUrl],
       });
+      const profile = await prisma.userProfile.findUnique({ where: { userId: user.id }, select: { recruiterLocation: true } });
+      const searchLocation = profile?.recruiterLocation?.trim() || app.location?.trim() || null;
       if (!domain) {
-        return NextResponse.json({ domain: null, status: "no_domain", company: app.company, pattern: null, error: null, enrichedAt: null, contacts: [] });
+        return NextResponse.json({ domain: null, status: "no_domain", company: app.company, pattern: null, error: null, enrichedAt: null, contacts: [], searchLocation, sourceStats: {} });
       }
-      const status = await getEnrichStatusByDomain(domain);
+      const status = await getEnrichStatusByDomain(domain, user.id, searchLocation);
+      if (status) await syncRecruiterTask(applicationId, status);
       return NextResponse.json(
-        status ?? { domain, status: "idle", company: app.company, pattern: null, error: null, enrichedAt: null, contacts: [] }
+        status ?? { domain, status: "idle", company: app.company, pattern: null, error: null, enrichedAt: null, contacts: [], searchLocation, sourceStats: {} }
       );
     }
 

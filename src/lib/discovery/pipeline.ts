@@ -11,26 +11,12 @@ import { fetchWeWorkRemotelyLeads } from "./weworkremotely";
 import { scoreNewLeads, type ScoreOptions } from "./score";
 import { ensureSearchPrefs, type SearchPrefs } from "../searchPrefs";
 import type { FetchResult, RawLead } from "./types";
+import { canonicalizeJobUrl } from "../jobs/url";
 
 // Multi-user discovery: the four sources are fetched ONCE per tick and ingested
 // into the GLOBAL JobLead catalog (a shared list, same for everyone). Each user's
 // scan then fit-scores the new catalog postings with their own key/profile into
 // their UserLead overlay (recorded as their ScanRun).
-
-// Params that only track where a click came from. Everything else (ATS tokens,
-// posting ids) must survive canonicalization or Greenhouse-style embed URLs
-// would all collapse into one.
-const TRACKING_PARAMS = new Set([
-  "src",
-  "source",
-  "gh_src",
-  "ref",
-  "trk",
-  "trackingid",
-  "alternatechannel",
-  "ebp",
-  "lipi",
-]);
 
 // Content fingerprint for cross-repost dedupe. The same posting routinely
 // reappears days later under a NEW external id (a board re-listing it) or via a
@@ -63,21 +49,7 @@ export function dedupeFingerprint(company: string, role: string): string | null 
 export const REPOST_WINDOW_MS = 15 * 24 * 60 * 60 * 1000;
 
 export function canonicalizeUrl(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  try {
-    const u = new URL(raw);
-    u.hash = "";
-    u.hostname = u.hostname.toLowerCase().replace(/^www\./, "");
-    for (const key of [...u.searchParams.keys()]) {
-      if (TRACKING_PARAMS.has(key.toLowerCase()) || key.toLowerCase().startsWith("utm_")) {
-        u.searchParams.delete(key);
-      }
-    }
-    u.searchParams.sort();
-    return u.toString().replace(/\/$/, "");
-  } catch {
-    return undefined;
-  }
+  return canonicalizeJobUrl(raw);
 }
 
 export interface SourceStats {

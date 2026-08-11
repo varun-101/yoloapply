@@ -12,6 +12,14 @@ import QuestionAnswerer from "./question-answerer";
 import JobDescriptionEditor from "./jd-editor";
 import FindContacts from "./find-contacts";
 import ShareButton from "./share-button";
+import WorkflowPanel from "./workflow-panel";
+import ApplicationPreparationPanel from "./application-preparation-panel";
+import ReplyPanel from "./reply-panel";
+import {
+  APPLICATION_TASK_DEFINITIONS,
+  deriveApplicationReadiness,
+} from "@/lib/application-agent/workflow-types";
+import { parsePreparationReport } from "@/lib/application-agent/preparation";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +32,9 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
       emails: { orderBy: { createdAt: "desc" } },
       contacts: true,
       files: { select: { kind: true } },
+      tasks: true,
+      analysis: true,
+      inboundReplies: { orderBy: { receivedAt: "desc" } },
     },
   });
   if (!app) notFound();
@@ -31,6 +42,38 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
   const kinds = new Set(app.files.map((f) => f.kind));
   const hasPdf = kinds.has("resume_pdf");
   const hasCoverLetter = kinds.has("cover_letter_pdf");
+  const taskDefinition = new Map(APPLICATION_TASK_DEFINITIONS.map((task) => [task.key, task]));
+  const sortedTasks = app.tasks
+    .map((task) => ({
+      key: task.key,
+      label: taskDefinition.get(task.key)?.label ?? task.key,
+      status: task.status,
+      required: task.required,
+      errorMessage: task.errorMessage,
+      sortOrder: taskDefinition.get(task.key)?.sortOrder ?? 999,
+    }))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  const readiness = deriveApplicationReadiness(sortedTasks);
+  const preparationTask = app.tasks.find((task) => task.key === "PREPARE_APPLICATION");
+  const preparationReport = parsePreparationReport(preparationTask?.metadata);
+  const submissionMetadata = app.events.find((event) => event.type === "APPLICATION_SUBMITTED")?.metadata;
+  const submissionSource =
+    submissionMetadata && typeof submissionMetadata === "object" && !Array.isArray(submissionMetadata)
+      ? submissionMetadata
+      : null;
+  const submission = submissionSource
+    ? {
+        pageUrl: typeof submissionSource.pageUrl === "string" ? submissionSource.pageUrl : null,
+        pageTitle: typeof submissionSource.pageTitle === "string" ? submissionSource.pageTitle : null,
+        confirmationText:
+          typeof submissionSource.confirmationText === "string" ? submissionSource.confirmationText : null,
+        confirmationNumber:
+          typeof submissionSource.confirmationNumber === "string" ? submissionSource.confirmationNumber : null,
+        recordedAt: typeof submissionSource.recordedAt === "string" ? submissionSource.recordedAt : null,
+      }
+    : null;
+  const strengths = Array.isArray(app.analysis?.strengths) ? app.analysis.strengths.filter((x): x is string => typeof x === "string") : [];
+  const gaps = Array.isArray(app.analysis?.gaps) ? app.analysis.gaps.filter((x): x is string => typeof x === "string") : [];
 
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto">
@@ -84,6 +127,57 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-4">
+          <WorkflowPanel
+            applicationId={app.id}
+            readiness={readiness}
+            tasks={sortedTasks}
+            hasJobDescription={!!app.jdText && app.jdText.length > 50}
+          />
+
+          <ApplicationPreparationPanel
+            report={preparationReport}
+            taskStatus={preparationTask?.status}
+            applyUrl={app.applyUrl}
+            submission={submission}
+          />
+
+          {app.analysis && (
+            <Card>
+              <CardHeader className="flex flex-row items-start justify-between gap-3">
+                <div>
+                  <CardTitle>Match analysis</CardTitle>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{app.analysis.summary}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="font-display text-3xl font-semibold tabular-nums">{app.analysis.score}%</div>
+                  <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
+                    {app.analysis.recommendation}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                <div>
+                  <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-400">
+                    Strengths
+                  </div>
+                  <ul className="space-y-1.5 text-slate-700 dark:text-slate-300">
+                    {strengths.map((strength) => <li key={strength}>• {strength}</li>)}
+                    {strengths.length === 0 && <li className="text-slate-400">No supported strengths returned.</li>}
+                  </ul>
+                </div>
+                <div>
+                  <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">
+                    Gaps
+                  </div>
+                  <ul className="space-y-1.5 text-slate-700 dark:text-slate-300">
+                    {gaps.map((gap) => <li key={gap}>• {gap}</li>)}
+                    {gaps.length === 0 && <li className="text-slate-400">No material gaps returned.</li>}
+                  </ul>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <JobDescriptionEditor id={app.id} jdUrl={app.jdUrl} jdText={app.jdText} />
 
           <ApplicationActions
@@ -118,6 +212,19 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
           )}
 
           <QuestionAnswerer applicationId={app.id} />
+
+          <ReplyPanel
+            applicationId={app.id}
+            replies={app.inboundReplies.map((reply) => ({
+              id: reply.id,
+              fromAddress: reply.fromAddress,
+              subject: reply.subject,
+              summary: reply.summary,
+              classification: reply.classification,
+              confidence: reply.confidence,
+              receivedAt: reply.receivedAt.toISOString(),
+            }))}
+          />
 
           <Card>
             <CardHeader>

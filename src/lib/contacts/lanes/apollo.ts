@@ -1,76 +1,138 @@
-import { fetchJson } from "../http";
 import { isPlausibleEmail } from "../verify";
 import { TARGET_TITLES, type LaneResult, type RawCandidate } from "../types";
 
-// Apollo people-DB lane (the "who works there" lane): query people at the
-// company's domain filtered to the target titles. Apollo returns names + titles
-// always, and a real email when the record is unlocked/known; locked records
-// come back as "email_not_unlocked@domain.com", which we drop to email-less (the
-// resolve step will pattern-guess those). Runs only when the user supplied a key.
-
-const ENDPOINT = "https://api.apollo.io/api/v1/mixed_people/search";
-const LOCKED_RE = /email_not_unlocked|not_unlocked|locked/i;
+const SEARCH_ENDPOINT = "https://api.apollo.io/api/v1/mixed_people/api_search";
+const ENRICH_ENDPOINT = "https://api.apollo.io/api/v1/people/match";
 
 interface ApolloPerson {
+  id?: string;
   name?: string;
   first_name?: string;
   last_name?: string;
+  last_name_obfuscated?: string;
   title?: string;
   email?: string | null;
-  email_status?: string | null; // "verified" | "guessed" | "unavailable" | null
+  email_status?: string | null;
   linkedin_url?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
 }
-interface ApolloResponse {
-  people?: ApolloPerson[];
+interface ApolloResponse { people?: ApolloPerson[]; person?: ApolloPerson }
+interface ApolloErrorBody { error?: string; message?: string; error_code?: string }
+
+class ApolloApiError extends Error {
+  constructor(public statusCode: number, public errorCode: string | null, message: string) {
+    super(message);
+  }
+}
+
+function locationOf(person: ApolloPerson): string | undefined {
+  return [person.city, person.state, person.country].filter(Boolean).join(", ") || undefined;
+}
+
+function nameOf(person: ApolloPerson): string | undefined {
+  return (person.name ?? `${person.first_name ?? ""} ${person.last_name ?? person.last_name_obfuscated ?? ""}`).trim() || undefined;
+}
+
+async function apolloRequest<T>(request: typeof fetch, url: string, apiKey: string, params: URLSearchParams): Promise<T> {
+  const response = await request(`${url}?${params.toString()}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json", "Cache-Control": "no-cache", "x-api-key": apiKey },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) {
+    const raw = (await response.text().catch(() => "")).slice(0, 1000);
+    let parsed: ApolloErrorBody = {};
+    try { parsed = JSON.parse(raw) as ApolloErrorBody; } catch { /* Apollo may return plain text */ }
+    const code = parsed.error_code ?? null;
+    const providerMessage = parsed.error ?? parsed.message ?? (raw || response.statusText);
+    const message = code === "API_INACCESSIBLE"
+      ? "Apollo People Search requires a paid Apollo plan; Free-plan API keys cannot access this endpoint."
+      : response.status === 401
+        ? "Apollo rejected the API key. Create or copy a valid API key from Apollo settings."
+        : response.status === 429
+          ? "Apollo rate limit exceeded."
+          : providerMessage;
+    throw new ApolloApiError(response.status, code, `Apollo returned HTTP ${response.status}${code ? ` (${code})` : ""}: ${message}`);
+  }
+  return (await response.json()) as T;
+}
+
+function laneStatus(error: unknown): LaneResult["status"] {
+  if (error instanceof ApolloApiError) {
+    if (error.errorCode === "API_INACCESSIBLE") return "plan_required";
+    if (error.statusCode === 401 || error.statusCode === 403) return "auth_error";
+    if (error.statusCode === 402) return "quota_exhausted";
+    if (error.statusCode === 429) return "rate_limited";
+  }
+  return "error";
 }
 
 export async function fetchApolloContacts(
   domain: string | null,
   company: string,
-  apiKey: string
+  apiKey: string,
+  location?: string | null,
+  request: typeof fetch = fetch
 ): Promise<LaneResult> {
   try {
-    const body: Record<string, unknown> = {
-      person_titles: TARGET_TITLES,
-      page: 1,
-      per_page: 25,
+    // Apollo documents these as query parameters with repeated [] array keys.
+    const params = new URLSearchParams({ page: "1", per_page: "25", include_similar_titles: "true" });
+    for (const title of TARGET_TITLES) params.append("person_titles[]", title);
+    if (domain) params.append("q_organization_domains_list[]", domain);
+    else params.set("q_organization_name", company);
+    if (location) params.append("person_locations[]", location);
+
+    const response = await apolloRequest<ApolloResponse>(request, SEARCH_ENDPOINT, apiKey, params);
+    const candidates: RawCandidate[] = (response.people ?? [])
+      .map((person) => ({
+        name: nameOf(person),
+        title: person.title ?? undefined,
+        linkedinUrl: person.linkedin_url ?? undefined,
+        location: locationOf(person),
+        providerPersonId: person.id,
+        source: "apollo" as const,
+        confidence: 0,
+        verified: false,
+        contactStatus: "not_requested" as const,
+      }))
+      .filter((person) => person.name && person.providerPersonId);
+    return { source: "apollo", candidates, status: "ok" };
+  } catch (error) {
+    return {
+      source: "apollo",
+      candidates: [],
+      error: error instanceof Error ? error.message : String(error),
+      status: laneStatus(error),
     };
-    if (domain) body.q_organization_domains_list = [domain];
-    else body.q_organization_name = company;
-
-    const res = await fetchJson<ApolloResponse>(ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apiKey },
-      body: JSON.stringify(body),
-    });
-    if (!res) return { source: "apollo", candidates: [], error: "Apollo request failed (key/credits?)" };
-
-    const candidates: RawCandidate[] = [];
-    for (const p of res.people ?? []) {
-      const name = (p.name ?? `${p.first_name ?? ""} ${p.last_name ?? ""}`).trim() || undefined;
-      const title = p.title ?? undefined;
-      const linkedinUrl = p.linkedin_url ?? undefined;
-      const email = p.email ?? "";
-      const usable = email && !LOCKED_RE.test(email) && isPlausibleEmail(email);
-      if (usable) {
-        const verified = p.email_status === "verified";
-        candidates.push({
-          name,
-          title,
-          email: email.toLowerCase(),
-          linkedinUrl,
-          source: "apollo",
-          confidence: verified ? 0.92 : 0.65,
-          verified,
-          verifyMethod: verified ? "apollo" : undefined,
-        });
-      } else if (name) {
-        // Located the person; address locked → resolve step fills it in.
-        candidates.push({ name, title, linkedinUrl, source: "apollo", confidence: 0 });
-      }
-    }
-    return { source: "apollo", candidates };
-  } catch (e: unknown) {
-    return { source: "apollo", candidates: [], error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+export async function resolveApolloContact(
+  apiKey: string,
+  person: { providerPersonId?: string | null; name?: string | null; linkedinUrl?: string | null; domain?: string | null },
+  request: typeof fetch = fetch
+): Promise<RawCandidate> {
+  const params = new URLSearchParams({ reveal_personal_emails: "false", reveal_phone_number: "false" });
+  if (person.providerPersonId) params.set("id", person.providerPersonId);
+  if (person.linkedinUrl) params.set("linkedin_url", person.linkedinUrl);
+  if (person.name) params.set("name", person.name);
+  if (person.domain) params.set("domain", person.domain);
+  const response = await apolloRequest<ApolloResponse>(request, ENRICH_ENDPOINT, apiKey, params);
+  const result = response.person;
+  const email = result?.email && isPlausibleEmail(result.email) ? result.email.toLowerCase() : undefined;
+  return {
+    name: result ? nameOf(result) : person.name ?? undefined,
+    title: result?.title ?? undefined,
+    email,
+    linkedinUrl: result?.linkedin_url ?? person.linkedinUrl ?? undefined,
+    location: result ? locationOf(result) : undefined,
+    providerPersonId: result?.id ?? person.providerPersonId ?? undefined,
+    source: "apollo",
+    confidence: email ? (result?.email_status === "verified" ? 0.92 : 0.7) : 0,
+    verified: result?.email_status === "verified",
+    verifyMethod: result?.email_status === "verified" ? "apollo" : undefined,
+    contactStatus: email ? "resolved" : "failed",
+  };
 }

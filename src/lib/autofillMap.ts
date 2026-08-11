@@ -2,6 +2,13 @@ import { chatJson, deAi } from "./llm";
 import { getProfile } from "./profile";
 import { getProjectBank } from "./projectBank";
 import { getLlmConfig } from "./credentials";
+import {
+  enforceAutofillDecisions,
+  type AutofillConfidence,
+  type AutofillKind,
+  type AutofillProposal,
+  type SensitiveFieldCategory,
+} from "./application-agent/autofill-policy";
 
 // A field as seen by the content script.
 export interface FormFieldSpec {
@@ -12,15 +19,19 @@ export interface FormFieldSpec {
   placeholder?: string;
   autocomplete?: string;
   maxLength?: number;
+  required?: boolean;
   options?: string[]; // for <select> — the visible option texts
 }
 
 export interface MappedField {
   id: string;
   value: string;
-  kind: "profile" | "generated" | "select" | "skip";
-  confidence: "high" | "medium" | "low";
+  kind: AutofillKind;
+  confidence: AutofillConfidence;
   profileKey?: string; // set by the model for kind=profile; server substitutes the real value
+  requiresHumanReview: boolean;
+  reason?: string;
+  sensitivity?: SensitiveFieldCategory;
 }
 
 // The only keys the model may reference for identity fields. The server fills the
@@ -43,15 +54,19 @@ const PROFILE_KEYS = [
   "currentCompany",
   "school",
   "degree",
+  "workAuthorization",
+  "sponsorship",
+  "noticePeriod",
+  "willingToRelocate",
 ] as const;
 
 const SYSTEM = `You fill out job-application forms on behalf of a candidate. You are given the candidate's profile, the job context, and a list of form fields (each with a label, name, type, and—for dropdowns—the available options). For EACH field, decide what to put in it.
 
 Rules — non-negotiable:
 - NEVER fabricate facts. If a factual field isn't answerable from the profile (e.g. "Aadhaar number", "current/expected CTC", "notice period", "visa status"), set kind="skip".
-- IDENTITY / CONTACT / PROFILE fields (name, email, phone, location, links, current company/role, education): set kind="profile" and set "profileKey" to the SINGLE best-matching key from this list — do NOT write the value yourself (the system substitutes the real value):
+- IDENTITY / CONTACT / PROFILE fields (name, email, phone, location, links, current company/role, education, and saved application answers): set kind="profile" and set "profileKey" to the SINGLE best-matching key from this list — do NOT write the value yourself (the system substitutes the real value):
   ${PROFILE_KEYS.join(", ")}
-- <select> fields (options provided): kind="select" and "value" MUST be EXACTLY one of the provided option strings (copy verbatim). If none fit, kind="skip".
+- <select> fields (options provided): for a saved profile/application answer, still use kind="profile" plus profileKey. Otherwise use kind="select" and copy an option verbatim. If the supported value is not an exact option, use kind="skip".
 - Open-ended free-text ("Why this company?", "Describe a project", cover letter): kind="generated" and write a specific, truthful answer grounded ONLY in the candidate's real work. Respect maxLength. Keep tight (~80-130 words) unless a long cover letter is clearly expected.
 - Passwords, OTPs, file uploads, captchas, or anything sensitive/unknowable: kind="skip".
 - Yes/No or single-choice text fields: answer concisely and truthfully from the profile; skip if unknowable.
@@ -100,6 +115,7 @@ export async function mapAutofill(userId: string, input: MapInput): Promise<Mapp
       tech: p.techStack,
       year: p.year,
     })),
+    applicationAnswers: profile.applicationAnswers,
   };
 
   const userPrompt = `# CANDIDATE PROFILE
@@ -114,7 +130,7 @@ ${JSON.stringify(input.fields, null, 2)}
 # TASK
 Return the JSON mapping with one entry per field id. Remember: selects must use an exact option string; never invent facts; skip anything sensitive or unknowable.`;
 
-  const out = await chatJson<{ fields: MappedField[] }>({
+  const out = await chatJson<{ fields: AutofillProposal[] }>({
     ...llmCfg,
     system: SYSTEM,
     user: userPrompt,
@@ -143,15 +159,19 @@ Return the JSON mapping with one entry per field id. Remember: selects must use 
     currentCompany: candidate.currentCompany,
     school: candidate.education?.school ?? "",
     degree: candidate.education?.degree ?? "",
+    workAuthorization: candidate.applicationAnswers.workAuthorization ?? "",
+    sponsorship: candidate.applicationAnswers.sponsorship ?? "",
+    noticePeriod: candidate.applicationAnswers.noticePeriod ?? "",
+    willingToRelocate: candidate.applicationAnswers.willingToRelocate ?? "",
   };
 
-  return raw.map((f) => {
+  const substituted = raw.map((f) => {
     if (f.kind === "profile") {
       const key = f.profileKey ?? "";
       const real = profileValues[key];
       if (real) return { ...f, value: real };
       // Unknown/missing key — don't trust the model's free-text value.
-      return { ...f, kind: "skip", value: "" };
+      return { ...f, kind: "skip" as const, value: "" };
     }
     // Strip em dashes from generated free-text so it doesn't read as AI-written.
     if (f.kind === "generated" && f.value) {
@@ -159,4 +179,7 @@ Return the JSON mapping with one entry per field id. Remember: selects must use 
     }
     return f;
   });
+
+  // The model proposes values; deterministic policy owns the final decision.
+  return enforceAutofillDecisions(input.fields, substituted);
 }

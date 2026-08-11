@@ -2,12 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { draftColdEmail } from "@/lib/coldEmail";
 import { requireUser, apiError } from "@/lib/auth";
+import {
+  completeApplicationTask,
+  failApplicationTask,
+  startApplicationTask,
+} from "@/lib/application-agent/workflow";
 
 export async function POST(req: NextRequest) {
+  let workflowApplicationId: string | null = null;
+  let workflowStarted = false;
   try {
     const user = await requireUser(req);
     const body = await req.json();
-    const { company, recipientName, recipientTitle, recipientEmail, role, hookContext, applicationId, emailId } =
+    const { company, recipientName, recipientTitle, recipientEmail, role, hookContext, applicationId, emailId, recruiterCandidateId } =
       body ?? {};
     if (!company) return NextResponse.json({ error: "company required" }, { status: 400 });
 
@@ -22,6 +29,7 @@ export async function POST(req: NextRequest) {
       });
       if (app) {
         ownedApplicationId = app.id;
+        workflowApplicationId = app.id;
         roleFromApp = app.role;
         jobContext = {
           applyUrl: app.applyUrl ?? app.jdUrl ?? undefined,
@@ -30,6 +38,14 @@ export async function POST(req: NextRequest) {
           alreadyApplied: !!app.appliedAt || app.status === "applied",
         };
       }
+    }
+
+    if (ownedApplicationId) {
+      const started = await startApplicationTask(ownedApplicationId, "GENERATE_OUTREACH");
+      if (started.alreadyRunning) {
+        return NextResponse.json({ error: "Outreach generation is already running." }, { status: 409 });
+      }
+      workflowStarted = true;
     }
 
     const draft = await draftColdEmail(user.id, {
@@ -43,6 +59,63 @@ export async function POST(req: NextRequest) {
 
     const cred = await prisma.userCredential.findUnique({ where: { userId: user.id } });
 
+    // Choosing a discovered candidate currently deep-links to this draft page.
+    // Materialize that choice as the existing tenant-owned Contact abstraction
+    // so recruiter selection is durable without introducing a parallel model.
+    let selectedContactId: string | null = null;
+    const recruiterCandidate = ownedApplicationId && recipientEmail && recruiterCandidateId
+      ? await prisma.discoveredContact.findFirst({
+          where: {
+            id: recruiterCandidateId,
+            email: String(recipientEmail).trim().toLowerCase(),
+            source: { not: "role_inbox" },
+            cache: { ownerUserId: user.id },
+          },
+        })
+      : null;
+    if (ownedApplicationId && recipientEmail && recruiterCandidate) {
+      const normalizedEmail = String(recipientEmail).trim().toLowerCase();
+      const existingContact = await prisma.contact.findFirst({
+        where: { userId: user.id, email: normalizedEmail },
+      });
+      if (existingContact) {
+        const selected = await prisma.contact.update({
+          where: { id: existingContact.id },
+          data: {
+            name: recipientName || recruiterCandidate.name || existingContact.name,
+            title: recipientTitle || recruiterCandidate.title || existingContact.title,
+            company: company || existingContact.company,
+            phone: recruiterCandidate.phone || existingContact.phone,
+            linkedinUrl: recruiterCandidate.linkedinUrl || existingContact.linkedinUrl,
+            applicationId: existingContact.applicationId ?? ownedApplicationId,
+          },
+        });
+        selectedContactId = selected.id;
+      } else {
+        const selected = await prisma.contact.create({
+          data: {
+            userId: user.id,
+            name: recipientName || recruiterCandidate.name || normalizedEmail,
+            title: recipientTitle || recruiterCandidate.title || null,
+            company,
+            email: normalizedEmail,
+            phone: recruiterCandidate.phone,
+            linkedinUrl: recruiterCandidate.linkedinUrl,
+            source: "discovered",
+            applicationId: ownedApplicationId,
+          },
+        });
+        selectedContactId = selected.id;
+      }
+      await completeApplicationTask(ownedApplicationId, "FIND_RECRUITER", {
+        metadata: {
+          contactId: selectedContactId,
+          email: normalizedEmail,
+          name: recipientName || null,
+        },
+      });
+    }
+
     // Persist the draft immediately so it survives even if it is never sent.
     // Regenerating with the same emailId overwrites the previous draft row.
     const data = {
@@ -54,6 +127,7 @@ export async function POST(req: NextRequest) {
       body: draft.body,
       status: "draft",
       applicationId: ownedApplicationId,
+      contactId: selectedContactId,
       recipientTitle: recipientTitle || null,
       recipientCompany: company,
       roleTarget: role || roleFromApp || null,
@@ -71,8 +145,17 @@ export async function POST(req: NextRequest) {
       saved = await prisma.email.create({ data });
     }
 
+    if (ownedApplicationId) {
+      await completeApplicationTask(ownedApplicationId, "GENERATE_OUTREACH", {
+        metadata: { emailId: saved.id, contactId: selectedContactId },
+      });
+    }
+
     return NextResponse.json({ ...draft, emailId: saved.id });
   } catch (e) {
+    if (workflowApplicationId && workflowStarted) {
+      await failApplicationTask(workflowApplicationId, "GENERATE_OUTREACH", e).catch(() => {});
+    }
     return apiError(e);
   }
 }

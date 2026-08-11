@@ -10,3 +10,6 @@ test-results
 *.log
 
 tsconfig.tsbuildinfo
+.venv
+__pycache__
+.claude/worktrees

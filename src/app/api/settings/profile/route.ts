@@ -31,6 +31,15 @@ interface ProfileBody {
   education?: { degree?: string; school?: string; cgpa?: string; grad?: string } | null;
   experience?: unknown[];
   extras?: unknown[];
+  applicationAnswers?: {
+    workAuthorization?: string;
+    sponsorship?: string;
+    noticePeriod?: string;
+    willingToRelocate?: string;
+    currentLocation?: string;
+  };
+  followUpDelayDays?: number;
+  recruiterLocation?: string;
 }
 
 export async function PUT(req: NextRequest) {
@@ -64,6 +73,15 @@ export async function PUT(req: NextRequest) {
         ? body.experience
         : []) as Prisma.InputJsonValue,
       extras: (Array.isArray(body.extras) ? body.extras : []) as Prisma.InputJsonValue,
+      applicationAnswers: {
+        workAuthorization: body.applicationAnswers?.workAuthorization?.trim() || undefined,
+        sponsorship: body.applicationAnswers?.sponsorship?.trim() || undefined,
+        noticePeriod: body.applicationAnswers?.noticePeriod?.trim() || undefined,
+        willingToRelocate: body.applicationAnswers?.willingToRelocate?.trim() || undefined,
+        currentLocation: body.applicationAnswers?.currentLocation?.trim() || undefined,
+      } as Prisma.InputJsonValue,
+      followUpDelayDays: Math.min(30, Math.max(1, Math.round(Number(body.followUpDelayDays) || 5))),
+      recruiterLocation: str(body.recruiterLocation),
     };
 
     const profile = await prisma.userProfile.upsert({

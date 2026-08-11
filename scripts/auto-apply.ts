@@ -107,12 +107,15 @@ async function main() {
     { selectors: ["input[name*='portfolio' i]", "input[name*='website' i]", "input[id*='website' i]"], value: owner.portfolio },
   ];
 
+  let filledCount = 0;
+
   for (const f of fills) {
     for (const sel of f.selectors) {
       const loc = page.locator(sel).first();
       if (await loc.count().catch(() => 0)) {
         try {
           await loc.fill(f.value, { timeout: 1500 });
+          filledCount++;
           console.log("Filled", sel, "=", f.value.slice(0, 40));
           break;
         } catch {
@@ -124,6 +127,7 @@ async function main() {
 
   // Resume upload — any input[type=file] that mentions resume/cv.
   const fileInputs = await page.locator("input[type='file']").all();
+  let resumeAttached = false;
   for (const fi of fileInputs) {
     try {
       const nameAttr = (await fi.getAttribute("name")) ?? "";
@@ -131,6 +135,7 @@ async function main() {
       const blob = (nameAttr + " " + idAttr).toLowerCase();
       if (/resume|cv|file/.test(blob) || fileInputs.length === 1) {
         await fi.setInputFiles(resumePdfPath);
+        resumeAttached = true;
         console.log("Uploaded resume to file input:", nameAttr || idAttr || "(unnamed)");
         break;
       }
@@ -139,13 +144,60 @@ async function main() {
     }
   }
 
-  await prisma.event.create({
-    data: {
-      applicationId: app.id,
-      type: "note",
-      detail: "Auto-apply worker prefilled the form. Browser left open for human review/submit.",
-    },
-  });
+  const capturedAt = new Date();
+  await prisma.$transaction([
+    prisma.applicationTask.upsert({
+      where: { applicationId_key: { applicationId: app.id, key: "PREPARE_APPLICATION" } },
+      create: {
+        applicationId: app.id,
+        key: "PREPARE_APPLICATION",
+        status: "NEEDS_REVIEW",
+        required: true,
+        attempt: 1,
+        errorMessage: "Local prefilling completed. Review the browser form before submitting.",
+        completedAt: capturedAt,
+        metadata: {
+          version: 1,
+          pageUrl: app.applyUrl,
+          atsProvider: "generic",
+          fields: [],
+          filledCount,
+          reviewCount: 0,
+          skippedCount: 0,
+          resumeAttached,
+          coverLetterAttached: false,
+          capturedAt: capturedAt.toISOString(),
+        },
+      },
+      update: {
+        status: "NEEDS_REVIEW",
+        required: true,
+        errorCode: null,
+        errorMessage: "Local prefilling completed. Review the browser form before submitting.",
+        completedAt: capturedAt,
+        metadata: {
+          version: 1,
+          pageUrl: app.applyUrl,
+          atsProvider: "generic",
+          fields: [],
+          filledCount,
+          reviewCount: 0,
+          skippedCount: 0,
+          resumeAttached,
+          coverLetterAttached: false,
+          capturedAt: capturedAt.toISOString(),
+        },
+      },
+    }),
+    prisma.event.create({
+      data: {
+        applicationId: app.id,
+        type: "APPLICATION_PREPARED",
+        detail: "Local prefiller completed. Browser left open for human review; submission was not attempted.",
+        metadata: { mode: "local_playwright", filledCount, resumeAttached },
+      },
+    }),
+  ]);
 
   console.log("\nDone prefilling. Review the form, then click submit yourself.");
   console.log("Close the browser window when finished. (The worker will exit.)");

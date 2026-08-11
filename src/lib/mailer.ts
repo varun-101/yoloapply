@@ -17,6 +17,8 @@ export interface SendOptions {
   subject: string;
   body: string; // plain text
   attachments?: MailAttachment[];
+  inReplyTo?: string;
+  references?: string[];
 }
 
 export async function sendEmail(
@@ -36,6 +38,8 @@ export async function sendEmail(
     to: opts.toName ? { name: opts.toName, address: opts.to } : opts.to,
     subject: opts.subject,
     text: opts.body,
+    inReplyTo: opts.inReplyTo,
+    references: opts.references,
     attachments: (opts.attachments ?? []).map((a) => ({
       filename: a.filename,
       content: a.content,

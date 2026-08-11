@@ -119,7 +119,7 @@ export default function ApplicationActions(props: {
           </Button>
           <Button onClick={autoApply} disabled={!props.applyUrl || !props.hasPdf || busy !== null} variant="outline">
             {busy === "apply" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe className="h-4 w-4" />}
-            Auto-apply (Playwright)
+            Open local prefiller
           </Button>
           <Button onClick={() => setStatus("applied")} disabled={busy !== null} variant="outline">
             <Send className="h-4 w-4" /> Mark applied

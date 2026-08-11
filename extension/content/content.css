@@ -120,6 +120,18 @@
 #yoloapply-widget .yolo-status.yolo-ok { background: rgba(52, 211, 153, 0.1); color: #6EE7B7; border-color: rgba(52, 211, 153, 0.3); }
 #yoloapply-widget .yolo-status.yolo-err { background: rgba(251, 113, 133, 0.1); color: #FDA4AF; border-color: rgba(251, 113, 133, 0.3); }
 #yoloapply-widget .yolo-status.yolo-info { background: rgba(255, 178, 36, 0.1); color: #FFB224; border-color: rgba(255, 178, 36, 0.3); }
+#yoloapply-widget .yolo-review {
+  padding: 9px;
+  border: 1px solid rgba(255, 178, 36, 0.3);
+  border-radius: 8px;
+  background: rgba(255, 178, 36, 0.08);
+  color: #D7DDEC;
+  font-size: 12px;
+}
+#yoloapply-widget .yolo-review strong { display: block; color: #FFCF75; }
+#yoloapply-widget .yolo-review .yolo-review-summary { margin-top: 3px; color: #8693B6; }
+#yoloapply-widget .yolo-review ul { margin-top: 6px; padding-left: 17px; list-style: disc; }
+#yoloapply-widget .yolo-review li { margin-top: 3px; list-style: disc; }
 #yoloapply-widget .yolo-small { font-size: 11px; color: #5E6A8E; }
 #yoloapply-widget .yolo-hidden { display: none !important; }
 .yolo-fill-glow { transition: box-shadow 0.6s ease, background-color 0.6s ease; box-shadow: 0 0 0 3px rgba(255, 178, 36, 0.5) !important; }

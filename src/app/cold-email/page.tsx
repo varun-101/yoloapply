@@ -16,6 +16,7 @@ function ColdEmailInner() {
   const [role, setRole] = useState(sp.get("role") ?? "");
   const [hookContext, setHookContext] = useState("");
   const [applicationId, setApplicationId] = useState(sp.get("applicationId") ?? "");
+  const [recruiterCandidateId] = useState(sp.get("recruiterCandidateId") ?? "");
 
   const [subject, setSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
@@ -82,6 +83,7 @@ function ColdEmailInner() {
           role,
           hookContext,
           applicationId: applicationId || undefined,
+          recruiterCandidateId: recruiterCandidateId || undefined,
           emailId: emailId || undefined,
         }),
       });

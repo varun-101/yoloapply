@@ -4,6 +4,12 @@ import { personalizeOnePage } from "@/lib/onePage";
 import { saveResumeArtifacts } from "@/lib/compile";
 import { requireUser, apiError } from "@/lib/auth";
 import { getProfile, resumeFilename } from "@/lib/profile";
+import {
+  completeApplicationTask,
+  failApplicationTask,
+  initializeApplicationWorkflow,
+  startApplicationTask,
+} from "@/lib/application-agent/workflow";
 
 export async function GET(req: NextRequest) {
   try {
@@ -42,12 +48,16 @@ export async function POST(req: NextRequest) {
         status: "draft",
       },
     });
+    await initializeApplicationWorkflow(app.id, {
+      hasJobDescription: typeof jdText === "string" && jdText.trim().length >= 50,
+    });
 
     await prisma.event.create({
       data: { applicationId: app.id, type: "status_change", detail: "draft" },
     });
 
     if (personalize && jdText && jdText.trim().length > 50) {
+      await startApplicationTask(app.id, "GENERATE_RESUME");
       try {
         const result = await personalizeOnePage(user.id, { company, role, jobDescription: jdText });
         const profile = await getProfile(user.id);
@@ -68,8 +78,17 @@ export async function POST(req: NextRequest) {
         await prisma.event.create({
           data: { applicationId: app.id, type: "personalized", detail },
         });
+        await completeApplicationTask(app.id, "GENERATE_RESUME", {
+          metadata: {
+            tightness: result.tightness,
+            attempts: result.attempts,
+            pages: result.pages,
+            clippedFromMultiPage: result.clippedFromMultiPage,
+          },
+        });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
+        await failApplicationTask(app.id, "GENERATE_RESUME", e);
         await prisma.event.create({
           data: { applicationId: app.id, type: "note", detail: "Personalization failed: " + msg.slice(0, 500) },
         });

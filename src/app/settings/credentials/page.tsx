@@ -14,6 +14,8 @@ interface CredStatus {
   llmModel: string | null;
   apolloKeySet: boolean;
   apolloLast4: string | null;
+  signalhireKeySet: boolean;
+  signalhireLast4: string | null;
   searchKeySet: boolean;
   searchLast4: string | null;
   smtpHost: string | null;
@@ -54,6 +56,7 @@ export default function CredentialsSettings() {
   const [llmModel, setLlmModel] = useState("");
   const [deepseekKey, setDeepseekKey] = useState("");
   const [apolloKey, setApolloKey] = useState("");
+  const [signalhireKey, setSignalhireKey] = useState("");
   const [searchKey, setSearchKey] = useState("");
   const [smtpHost, setSmtpHost] = useState("smtp.gmail.com");
   const [smtpPort, setSmtpPort] = useState("587");
@@ -287,9 +290,11 @@ export default function CredentialsSettings() {
           <CardTitle className="flex items-center gap-2">
             <Users className="h-4 w-4" /> Contact finder (cold-email enrichment)
           </CardTitle>
-          {status.apolloKeySet || status.searchKeySet ? (
+          {status.apolloKeySet || status.signalhireKeySet || status.searchKeySet ? (
             <Badge className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
-              {[status.apolloKeySet && "Apollo", status.searchKeySet && "Search"].filter(Boolean).join(" + ")} active
+              {[status.signalhireKeySet && "SignalHire", status.apolloKeySet && "Apollo", status.searchKeySet && "Search"]
+                .filter(Boolean)
+                .join(" + ")} active
             </Badge>
           ) : (
             <Badge className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">free lanes only</Badge>
@@ -297,16 +302,40 @@ export default function CredentialsSettings() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Both optional. The &ldquo;Find contacts&rdquo; button on an application always runs the free
-            lanes (company-site scrape, GitHub, role inboxes, email-pattern guessing). These keys add two
-            stronger lanes, billed to your own account and stored encrypted.
+            All optional. Recruiter discovery searches SignalHire and Apollo for people first; contact details are
+            revealed only when you explicitly choose someone. Serper adds personal-site discovery. Paid calls use
+            your own account and every key is encrypted at rest.
           </p>
+          <Field
+            label="SignalHire API key"
+            hint={
+              status.signalhireKeySet
+                ? "Saved â€” enter a new key to replace. Searches company recruiters, then resolves the top contacts."
+                : "Search recruiter profiles first, then use the Person API only for someone you select."
+            }
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                type="password"
+                value={signalhireKey}
+                onChange={(e) => setSignalhireKey(e.target.value)}
+                placeholder={status.signalhireKeySet ? "enter a new key to replace" : "SignalHire API keyâ€¦"}
+                autoComplete="off"
+              />
+              {status.signalhireKeySet && (
+                <Badge className="shrink-0 gap-1 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
+                  <Check className="h-3 w-3" /> saved
+                  {status.signalhireLast4 && <span className="font-mono">â€¦{status.signalhireLast4}</span>}
+                </Badge>
+              )}
+            </div>
+          </Field>
           <Field
             label="Apollo API key"
             hint={
               status.apolloKeySet
-                ? "Saved — enter a new key to replace. People-at-company lane (founders/HR by title)."
-                : "People-DB lane: lists who works there by title + returns verified emails. apolloapp.io → Settings → API."
+                ? "Saved — Apollo People Search requires a paid Apollo plan. Discovery is free in credits, but unavailable to Free-plan API keys."
+                : "Optional paid-plan integration. People Search discovers recruiters; People Enrichment reveals only your selection."
             }
           >
             <div className="flex items-center gap-2">
@@ -353,16 +382,18 @@ export default function CredentialsSettings() {
                 put(
                   {
                     apolloKey: apolloKey || undefined,
+                    signalhireKey: signalhireKey || undefined,
                     searchKey: searchKey || undefined,
                   },
                   "finder",
                   "Contact-finder keys saved."
                 ).then(() => {
                   setApolloKey("");
+                  setSignalhireKey("");
                   setSearchKey("");
                 })
               }
-              disabled={busy !== null || (!apolloKey.trim() && !searchKey.trim())}
+              disabled={busy !== null || (!apolloKey.trim() && !signalhireKey.trim() && !searchKey.trim())}
             >
               {busy === "finder" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               Save
@@ -374,6 +405,15 @@ export default function CredentialsSettings() {
                 disabled={busy !== null}
               >
                 <Trash2 className="h-4 w-4" /> Remove Apollo
+              </Button>
+            )}
+            {status.signalhireKeySet && (
+              <Button
+                variant="outline"
+                onClick={() => put({ signalhireKey: null }, "finder", "SignalHire key removed.")}
+                disabled={busy !== null}
+              >
+                <Trash2 className="h-4 w-4" /> Remove SignalHire
               </Button>
             )}
             {status.searchKeySet && (

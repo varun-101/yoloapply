@@ -4,6 +4,7 @@ import { spawn } from "child_process";
 import path from "path";
 import { requireUser, apiError } from "@/lib/auth";
 import { fileExists } from "@/lib/files";
+import { startApplicationTask } from "@/lib/application-agent/workflow";
 
 // Local-only legacy flow: spawns a headed Playwright worker on the machine
 // running the server. On a deployed instance the Chrome extension is the
@@ -22,6 +23,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const cwd = path.resolve(".");
     const script = path.join(cwd, "scripts", "auto-apply.ts");
+    const workflow = await startApplicationTask(app.id, "PREPARE_APPLICATION");
+    if (workflow.alreadyRunning) {
+      return NextResponse.json({ error: "An application prefiller is already running." }, { status: 409 });
+    }
 
     // Spawn a detached worker. The worker runs Playwright headed; the user
     // watches and clicks submit. Output is not piped here — they get the browser.
@@ -40,7 +45,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     child.unref();
 
     await prisma.event.create({
-      data: { applicationId: app.id, type: "note", detail: `Auto-apply worker launched (pid ${child.pid}).` },
+      data: {
+        applicationId: app.id,
+        type: "APPLICATION_PREFILL_LAUNCHED",
+        detail: `Local application prefiller launched (pid ${child.pid}).`,
+        metadata: { mode: "local_playwright", pid: child.pid },
+      },
     });
 
     return NextResponse.json({ ok: true, pid: child.pid });

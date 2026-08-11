@@ -62,6 +62,11 @@ export async function getApolloKey(userId: string): Promise<string | null> {
   return cred?.apolloKeyEnc ? decryptSecret(cred.apolloKeyEnc) : null;
 }
 
+export async function getSignalHireKey(userId: string): Promise<string | null> {
+  const cred = await prisma.userCredential.findUnique({ where: { userId } });
+  return cred?.signalhireKeyEnc ? decryptSecret(cred.signalhireKeyEnc) : null;
+}
+
 export async function getSearchKey(userId: string): Promise<string | null> {
   const cred = await prisma.userCredential.findUnique({ where: { userId } });
   return cred?.searchKeyEnc ? decryptSecret(cred.searchKeyEnc) : null;
@@ -98,6 +103,7 @@ export interface CredentialUpdate {
   llmProvider?: string | null;
   llmModel?: string | null;
   apolloKey?: string | null;
+  signalhireKey?: string | null;
   searchKey?: string | null;
   smtpHost?: string | null;
   smtpPort?: number | null;
@@ -119,6 +125,9 @@ export async function setCredentials(userId: string, update: CredentialUpdate) {
   }
   if (update.apolloKey !== undefined) {
     data.apolloKeyEnc = update.apolloKey ? encryptSecret(update.apolloKey) : null;
+  }
+  if (update.signalhireKey !== undefined) {
+    data.signalhireKeyEnc = update.signalhireKey ? encryptSecret(update.signalhireKey) : null;
   }
   if (update.searchKey !== undefined) {
     data.searchKeyEnc = update.searchKey ? encryptSecret(update.searchKey) : null;

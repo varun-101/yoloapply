@@ -3,6 +3,13 @@ import { prisma } from "@/lib/db";
 import { sendEmail, MailAttachment } from "@/lib/mailer";
 import { requireUser, apiError } from "@/lib/auth";
 import { getFile } from "@/lib/files";
+import { sha256Hex } from "@/lib/crypto";
+import {
+  completeApplicationTask,
+  failApplicationTask,
+  startApplicationTask,
+} from "@/lib/application-agent/workflow";
+import { scheduleFollowUpForEmail } from "@/lib/application-agent/follow-up";
 
 export async function POST(req: NextRequest) {
   try {
@@ -100,9 +107,14 @@ export async function POST(req: NextRequest) {
     const cred = await prisma.userCredential.findUnique({ where: { userId: user.id } });
     const fromAddress = cred?.smtpUser ?? user.email;
 
-    // Persist as draft first so we have a record even if SMTP fails.
-    // The draft endpoint already saved a row; reuse it (with any edits the
-    // user made before sending) instead of creating a duplicate.
+    // One initial outreach per application/recipient is claimed atomically.
+    // If the process dies after SMTP accepted the message but before the final
+    // DB write, the row remains "sending" and is never retried automatically.
+    const recipientHash = sha256Hex(`${String(to).trim().toLowerCase()}|${ownedApplicationId ? "initial" : subject}`).slice(0, 24);
+    const idempotencyKey = `outreach-send:${ownedApplicationId ?? user.id}:${recipientHash}`;
+
+    // Persist as draft first so we have a record even if SMTP fails. Reuse the
+    // draft endpoint's row (including the user's edits) whenever possible.
     const draftData = {
       userId: user.id,
       toAddress: to,
@@ -119,14 +131,56 @@ export async function POST(req: NextRequest) {
       hookContext: hookContext ?? null,
       rationale: rationale ?? null,
       attachSource,
+      provider: "smtp",
     };
     const existingDraft = emailId
       ? await prisma.email.findFirst({ where: { id: emailId, userId: user.id } })
       : null;
-    const draft =
-      existingDraft && existingDraft.status === "draft"
-        ? await prisma.email.update({ where: { id: existingDraft.id }, data: draftData })
-        : await prisma.email.create({ data: draftData });
+    let draft;
+    if (existingDraft?.status === "sent" || existingDraft?.status === "sending") {
+      return NextResponse.json(
+        { error: existingDraft.status === "sent" ? "This outreach was already sent." : "This outreach is already sending." },
+        { status: 409 }
+      );
+    }
+
+    const claimedByKey = await prisma.email.findUnique({ where: { idempotencyKey } });
+    if (claimedByKey && claimedByKey.id !== existingDraft?.id) {
+      if (claimedByKey.status === "sent" || claimedByKey.status === "sending") {
+        return NextResponse.json(
+          { error: claimedByKey.status === "sent" ? "This outreach was already sent." : "This outreach is already sending." },
+          { status: 409 }
+        );
+      }
+      draft = await prisma.email.update({
+        where: { id: claimedByKey.id },
+        data: { ...draftData, idempotencyKey, status: "draft", errorMessage: null },
+      });
+    } else if (existingDraft) {
+      draft = await prisma.email.update({
+        where: { id: existingDraft.id },
+        data: { ...draftData, idempotencyKey, status: "draft", errorMessage: null },
+      });
+    } else {
+      draft = await prisma.email.create({
+        data: { ...draftData, idempotencyKey },
+      });
+    }
+
+    if (ownedApplicationId) {
+      const workflow = await startApplicationTask(ownedApplicationId, "SEND_OUTREACH");
+      if (workflow.alreadyRunning) {
+        return NextResponse.json({ error: "Outreach sending is already running." }, { status: 409 });
+      }
+    }
+
+    const claim = await prisma.email.updateMany({
+      where: { id: draft.id, status: { in: ["draft", "failed"] } },
+      data: { status: "sending", errorMessage: null },
+    });
+    if (claim.count === 0) {
+      return NextResponse.json({ error: "This outreach is already sending or was already sent." }, { status: 409 });
+    }
 
     try {
       const info = await sendEmail(user.id, {
@@ -146,12 +200,25 @@ export async function POST(req: NextRequest) {
         },
       });
       if (ownedApplicationId) {
+        await completeApplicationTask(ownedApplicationId, "SEND_OUTREACH", {
+          metadata: { emailId: updated.id, messageId: updated.messageId, provider: "smtp" },
+        });
         await prisma.event.create({
           data: {
             applicationId: ownedApplicationId,
             type: "email_sent",
             detail: `${subject} → ${to} (attached: ${attachSource})`,
           },
+        });
+        await scheduleFollowUpForEmail(ownedApplicationId, updated.id).catch(async (scheduleError) => {
+          const message = scheduleError instanceof Error ? scheduleError.message : String(scheduleError);
+          await prisma.event.create({
+            data: {
+              applicationId: ownedApplicationId!,
+              type: "FOLLOW_UP_SCHEDULE_FAILED",
+              detail: message.slice(0, 500),
+            },
+          }).catch(() => {});
         });
       }
       return NextResponse.json({ ok: true, email: updated, attachSource });
@@ -161,6 +228,11 @@ export async function POST(req: NextRequest) {
         where: { id: draft.id },
         data: { status: "failed", errorMessage: msg.slice(0, 500) },
       });
+      if (ownedApplicationId) {
+        await failApplicationTask(ownedApplicationId, "SEND_OUTREACH", e, { code: "smtp_send_failed" }).catch(
+          () => {}
+        );
+      }
       return apiError(e);
     }
   } catch (e) {

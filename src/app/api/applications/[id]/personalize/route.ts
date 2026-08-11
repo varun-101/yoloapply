@@ -4,6 +4,11 @@ import { personalizeOnePage } from "@/lib/onePage";
 import { saveResumeArtifacts } from "@/lib/compile";
 import { requireUser, apiError } from "@/lib/auth";
 import { getProfile, resumeFilename } from "@/lib/profile";
+import {
+  completeApplicationTask,
+  failApplicationTask,
+  startApplicationTask,
+} from "@/lib/application-agent/workflow";
 
 export const maxDuration = 300;
 
@@ -27,6 +32,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     // If a personalize is already running and isn't stale, don't start a second one.
     if (app.personalizeStatus === "running" && Date.now() - app.updatedAt.getTime() < STALE_MS) {
+      return NextResponse.json({ ok: true, status: "running", alreadyRunning: true });
+    }
+
+    const workflowTask = await startApplicationTask(app.id, "GENERATE_RESUME", STALE_MS);
+    if (workflowTask.alreadyRunning) {
       return NextResponse.json({ ok: true, status: "running", alreadyRunning: true });
     }
 
@@ -63,9 +73,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       await prisma.event.create({
         data: { applicationId: app.id, type: "personalized", detail },
       });
+      await completeApplicationTask(app.id, "GENERATE_RESUME", {
+        metadata: {
+          tightness: result.tightness,
+          attempts: result.attempts,
+          pages: result.pages,
+          clippedFromMultiPage: result.clippedFromMultiPage,
+        },
+      });
       return NextResponse.json({ ok: true, application: updated });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
+      await failApplicationTask(app.id, "GENERATE_RESUME", e);
       await prisma.application.update({
         where: { id: app.id },
         data: { personalizeStatus: "failed" },

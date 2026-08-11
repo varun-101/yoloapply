@@ -33,7 +33,7 @@ export const api = {
       body: JSON.stringify({ text, url }),
     }),
   createApplication: (payload) =>
-    request("/api/applications", { method: "POST", body: JSON.stringify(payload) }),
+    request("/api/jobs/ingest", { method: "POST", body: JSON.stringify(payload) }),
   listApplications: () => request("/api/applications"),
   getApplication: (id) => request(`/api/applications/${id}`),
   personalize: (id) =>
@@ -47,6 +47,10 @@ export const api = {
     request("/api/answer-question", { method: "POST", body: JSON.stringify(payload) }),
   autofillMap: (payload) =>
     request("/api/autofill-map", { method: "POST", body: JSON.stringify(payload) }),
+  reportPreparation: (id, payload) =>
+    request(`/api/applications/${id}/preparation`, { method: "POST", body: JSON.stringify(payload) }),
+  recordSubmission: (id, payload) =>
+    request(`/api/applications/${id}/submission`, { method: "POST", body: JSON.stringify(payload) }),
   coverLetter: (id) => request(`/api/applications/${id}/cover-letter`, { method: "POST" }),
   resumeInfo: () => request("/api/resume"),
   freshLeads: () => request("/api/discovery/leads?status=new&days=1"),

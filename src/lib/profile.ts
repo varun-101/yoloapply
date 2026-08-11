@@ -27,6 +27,14 @@ export interface ExtraEntry {
   summary?: string;
 }
 
+export interface ApplicationAnswers {
+  workAuthorization?: string;
+  sponsorship?: string;
+  noticePeriod?: string;
+  willingToRelocate?: string;
+  currentLocation?: string;
+}
+
 export interface CandidateProfile {
   userId: string;
   name: string;
@@ -43,6 +51,9 @@ export interface CandidateProfile {
   education: EducationInfo | null;
   experience: ExperienceEntry[];
   extras: ExtraEntry[];
+  applicationAnswers: ApplicationAnswers;
+  followUpDelayDays: number;
+  recruiterLocation: string;
 }
 
 function asArray<T>(v: unknown): T[] {
@@ -68,6 +79,12 @@ export async function getProfileOrNull(userId: string): Promise<CandidateProfile
     education: (row.education as EducationInfo | null) ?? null,
     experience: asArray<ExperienceEntry>(row.experience),
     extras: asArray<ExtraEntry>(row.extras),
+    applicationAnswers:
+      row.applicationAnswers && typeof row.applicationAnswers === "object"
+        ? (row.applicationAnswers as ApplicationAnswers)
+        : {},
+    followUpDelayDays: row.followUpDelayDays,
+    recruiterLocation: row.recruiterLocation ?? "",
   };
 }
 

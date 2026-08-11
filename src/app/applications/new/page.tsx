@@ -106,13 +106,18 @@ export default function NewApplication() {
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch("/api/applications", {
+      const res = await fetch("/api/jobs/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company, role, source, jdUrl, jdText, location, personalize }),
+        body: JSON.stringify({ company, role, source, jdUrl, jdText, location }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to create application");
+      if (personalize) {
+        const personalizeResponse = await fetch(`/api/applications/${data.id}/personalize`, { method: "POST" });
+        const personalizeBody = await personalizeResponse.json();
+        if (!personalizeResponse.ok) throw new Error(personalizeBody.error ?? "Resume personalization failed");
+      }
       router.push(`/applications/${data.id}`);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));

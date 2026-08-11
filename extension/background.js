@@ -173,6 +173,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, fields: m.fields ?? [] });
           return;
         }
+        case "reportPreparation": {
+          const report = await api.reportPreparation(msg.applicationId, msg.payload);
+          sendResponse({ ok: true, ...report });
+          return;
+        }
+        case "recordSubmission": {
+          const result = await api.recordSubmission(msg.applicationId, msg.payload);
+          sendResponse({ ok: true, ...result });
+          return;
+        }
         case "qaGenerate": {
           // Persisted, popup-independent generation. Create a pending entry,
           // respond immediately with its id, then resolve in the background so

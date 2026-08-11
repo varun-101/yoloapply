@@ -24,6 +24,9 @@ export default async function AppsList() {
             <PlusCircle className="h-4 w-4" /> New Application
           </Link>
         </Button>
+        <Button asChild variant="outline">
+          <Link href="/applications/inbox">Application inbox</Link>
+        </Button>
       </div>
       <Card>
         <CardHeader>

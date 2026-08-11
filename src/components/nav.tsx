@@ -3,8 +3,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Briefcase,
+  Clock3,
   FileText,
   LayoutDashboard,
+  Inbox,
   Mail,
   MessageSquareText,
   PlusCircle,
@@ -44,6 +46,7 @@ const SECTIONS: Section[] = [
     label: "Pipeline",
     items: [
       { href: "/applications", icon: Briefcase, label: "Applications" },
+      { href: "/applications/inbox", icon: Inbox, label: "Application inbox" },
       { href: "/applications/new", icon: PlusCircle, label: "New application" },
     ],
   },
@@ -51,6 +54,7 @@ const SECTIONS: Section[] = [
     label: "Outreach",
     items: [
       { href: "/cold-email", icon: Mail, label: "Cold outreach" },
+      { href: "/follow-ups", icon: Clock3, label: "Follow-ups" },
       { href: "/contacts", icon: Users, label: "Contacts" },
     ],
   },

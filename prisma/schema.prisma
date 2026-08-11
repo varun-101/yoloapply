@@ -25,17 +25,19 @@ model User {
   isAdmin Boolean @default(false)
   canScan Boolean @default(false)
 
-  profile      UserProfile?
-  searchPref   SearchPreference?
-  credential   UserCredential?
-  projects     Project[]
-  applications Application[]
-  contacts     Contact[]
-  emails       Email[]
-  userLeads    UserLead[]
-  scanRuns     ScanRun[]
-  files        StoredFile[]
-  interviewSessions InterviewSession[]
+  profile            UserProfile?
+  searchPref         SearchPreference?
+  credential         UserCredential?
+  projects           Project[]
+  applications       Application[]
+  contacts           Contact[]
+  emails             Email[]
+  userLeads          UserLead[]
+  scanRuns           ScanRun[]
+  files              StoredFile[]
+  interviewSessions  InterviewSession[]
+  applicationBatches ApplicationBatch[]
+  autoApplyRuns      AutoApplyRun[]
 }
 
 model UserProfile {
@@ -43,21 +45,28 @@ model UserProfile {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  name              String
-  email             String // contact email printed on the resume (may differ from login email)
-  phone             String?
-  github            String?
-  githubHandle      String?
-  linkedin          String?
-  linkedinHandle    String?
-  portfolio         String?
-  city              String?
-  country           String?
-  yearsOfExperience String?
-  education         Json? // { degree, school, cgpa, grad }
-  experience        Json   @default("[]") // [{ title, company, period, bullets: string[] }]
-  extras            Json   @default("[]") // [{ title, org, period, summary }]
-  updatedAt         DateTime @updatedAt
+  name               String
+  email              String // contact email printed on the resume (may differ from login email)
+  phone              String?
+  github             String?
+  githubHandle       String?
+  linkedin           String?
+  linkedinHandle     String?
+  portfolio          String?
+  city               String?
+  country            String?
+  yearsOfExperience  String?
+  education          Json? // { degree, school, cgpa, grad }
+  experience         Json     @default("[]") // [{ title, company, period, bullets: string[] }]
+  extras             Json     @default("[]") // [{ title, org, period, summary }]
+  // Explicitly supplied answers reused by application automation. Missing
+  // values remain missing; ATS mapping must never infer them.
+  applicationAnswers Json     @default("{}")
+  followUpDelayDays  Int      @default(5)
+  // Preferred geography for recruiter discovery. This is intentionally
+  // separate from the candidate's current location and job-discovery filters.
+  recruiterLocation  String?
+  updatedAt          DateTime @updatedAt
 }
 
 // Per-user project bank (replaces the hardcoded PROJECT_BANK module).
@@ -78,8 +87,8 @@ model Project {
   repoUrl   String?
   liveUrl   String?
   year      String?
-  featured  Boolean @default(false)
-  sortOrder Int     @default(0)
+  featured  Boolean  @default(false)
+  sortOrder Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -110,19 +119,20 @@ model UserCredential {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  deepseekKeyEnc String? // stores the API key for whichever provider is selected
-  llmProvider    String  @default("deepseek") // "deepseek" | "openrouter" | "gemini" | "openai"
-  llmModel       String? // optional model override; falls back to provider default
+  deepseekKeyEnc   String? // stores the API key for whichever provider is selected
+  llmProvider      String  @default("deepseek") // "deepseek" | "openrouter" | "gemini" | "openai"
+  llmModel         String? // optional model override; falls back to provider default
+  signalhireKeyEnc String?
   // Contact-finder lanes (cold-email enrichment), BYO + encrypted like the LLM key:
-  apolloKeyEnc   String? // Apollo.io API key — "people at company by title" people-DB lane
-  searchKeyEnc   String? // Serper.dev (Google search) API key — portfolio/personal-site lane
-  smtpHost       String?
-  smtpPort       Int?
-  smtpUser       String? // an email address — not secret
-  smtpPassEnc    String?
-  smtpFromName   String?
+  apolloKeyEnc     String? // Apollo.io API key — "people at company by title" people-DB lane
+  searchKeyEnc     String? // Serper.dev (Google search) API key — portfolio/personal-site lane
+  smtpHost         String?
+  smtpPort         Int?
+  smtpUser         String? // an email address — not secret
+  smtpPassEnc      String?
+  smtpFromName     String?
 
-  extensionTokenHash   String? @unique // sha256 hex of the full "yolo_…" token
+  extensionTokenHash   String?  @unique // sha256 hex of the full "yolo_…" token
   extensionTokenPrefix String? // first chars, display only
   updatedAt            DateTime @updatedAt
 }
@@ -140,7 +150,7 @@ model StoredFile {
   filename   String
   mimeType   String
   size       Int
-  bucketPath String @unique
+  bucketPath String   @unique
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -152,6 +162,79 @@ model StoredFile {
 
 // ── Applications & outreach ─────────────────────────────────────────────────
 
+enum ApplicationTaskKey {
+  PARSE_JOB
+  ANALYZE_MATCH
+  GENERATE_RESUME
+  FIND_RECRUITER
+  GENERATE_OUTREACH
+  PREPARE_APPLICATION
+  SEND_OUTREACH
+  FOLLOW_UP
+}
+
+enum ApplicationTaskStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  SKIPPED
+  NEEDS_REVIEW
+}
+
+enum MatchCategory {
+  STRONG_MATCH
+  GOOD_MATCH
+  LOW_MATCH
+  NOT_ELIGIBLE
+}
+
+enum MatchRecommendation {
+  APPLY
+  REVIEW
+  SKIP
+}
+
+enum FollowUpStatus {
+  SCHEDULED
+  DUE
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum ReplyClassification {
+  INTERVIEW
+  ASSESSMENT
+  REJECTION
+  REQUEST_INFO
+  FOLLOW_UP
+  OTHER
+}
+
+enum ApplicationBatchStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  PARTIAL_FAILED
+  CANCELLED
+}
+
+enum ApplicationBatchItemStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+enum BatchOperation {
+  ANALYZE_MATCH
+  GENERATE_RESUME
+  FIND_RECRUITER
+}
+
 model Application {
   id     String @id @default(cuid())
   userId String
@@ -161,23 +244,71 @@ model Application {
   role              String
   source            String // "linkedin" | "portal" | "manual" | "cold_email"
   jdUrl             String?
+  canonicalUrl      String?
+  rawJdText         String?
   jdText            String?
   location          String?
-  status            String  @default("draft") // draft | personalized | applied | replied | interview | offer | rejected | closed
+  status            String                 @default("draft") // draft | personalized | applied | replied | interview | offer | rejected | closed
   personalizeStatus String? // null | "running" | "failed" — drives a persistent loading state
   coverLetterText   String?
   applyUrl          String?
   notes             String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
   appliedAt         DateTime?
   events            Event[]
   contacts          Contact[]
   emails            Email[]
   files             StoredFile[]
   interviewSessions InterviewSession[]
+  tasks             ApplicationTask[]
+  analysis          ApplicationAnalysis?
+  followUps         FollowUp[]
+  inboundReplies    InboundReply[]
+  batchItems        ApplicationBatchItem[]
+  autoApplyRuns     AutoApplyRun[]
 
+  @@unique([userId, canonicalUrl])
   @@index([userId, status])
+}
+
+// Durable, independently retryable preparation steps. Application.status keeps
+// tracking the external lifecycle (draft/applied/interview/etc.); these rows
+// describe whether the automation artifacts are ready for human review.
+model ApplicationTask {
+  id            String                @id @default(cuid())
+  applicationId String
+  application   Application           @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  key           ApplicationTaskKey
+  status        ApplicationTaskStatus @default(PENDING)
+  required      Boolean               @default(true)
+  attempt       Int                   @default(0)
+  errorCode     String?
+  errorMessage  String?
+  metadata      Json?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  @@unique([applicationId, key])
+  @@index([applicationId, status])
+}
+
+// Structured match analysis belongs to the tracked application, rather than
+// only to the discovery overlay, so manually captured jobs receive it too.
+model ApplicationAnalysis {
+  id             String              @id @default(cuid())
+  applicationId  String              @unique
+  application    Application         @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  score          Int
+  category       MatchCategory
+  recommendation MatchRecommendation
+  summary        String
+  strengths      Json                @default("[]")
+  gaps           Json                @default("[]")
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 }
 
 model Contact {
@@ -189,6 +320,7 @@ model Contact {
   title         String?
   company       String
   email         String?
+  phone         String?
   linkedinUrl   String?
   source        String? // "manual" | "scrape" | "cold_email_target" | "discovered"
   domain        String? // company domain this contact was discovered under
@@ -209,29 +341,143 @@ model Email {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  toAddress     String
-  toName        String?
-  fromAddress   String
-  subject       String
-  body          String
-  status        String    @default("draft") // draft | sent | replied | bounced | failed
-  sentAt        DateTime?
-  messageId     String?
-  errorMessage  String?
-  applicationId String?
-  application   Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
-  contactId     String?
-  contact       Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  toAddress         String
+  toName            String?
+  fromAddress       String
+  subject           String
+  body              String
+  status            String         @default("draft") // draft | sent | replied | bounced | failed
+  sentAt            DateTime?
+  messageId         String?
+  threadId          String?
+  provider          String         @default("smtp")
+  idempotencyKey    String?        @unique
+  errorMessage      String?
+  applicationId     String?
+  application       Application?   @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  contactId         String?
+  contact           Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  scheduledFollowUp FollowUp?      @relation("FollowUpOriginalEmail")
+  sentForFollowUp   FollowUp?      @relation("FollowUpSentEmail")
+  inboundReplies    InboundReply[]
   // Full draft-page context, persisted so the contact detail view can reconstruct the original draft.
-  recipientTitle   String?
-  recipientCompany String?
-  roleTarget       String? // role they were hiring for (if specified)
-  hookContext      String? // the user-supplied hook / recent news / context
-  rationale        String? // AI's one-line explanation of which proof point was chosen
-  attachSource     String? // "personalized" | "generic" | "none"
-  createdAt        DateTime @default(now())
+  recipientTitle    String?
+  recipientCompany  String?
+  roleTarget        String? // role they were hiring for (if specified)
+  hookContext       String? // the user-supplied hook / recent news / context
+  rationale         String? // AI's one-line explanation of which proof point was chosen
+  attachSource      String? // "personalized" | "generic" | "none"
+  createdAt         DateTime       @default(now())
 
   @@index([userId])
+}
+
+model FollowUp {
+  id              String         @id @default(cuid())
+  applicationId   String
+  application     Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  originalEmailId String         @unique
+  originalEmail   Email          @relation("FollowUpOriginalEmail", fields: [originalEmailId], references: [id], onDelete: Cascade)
+  sentEmailId     String?        @unique
+  sentEmail       Email?         @relation("FollowUpSentEmail", fields: [sentEmailId], references: [id], onDelete: SetNull)
+  status          FollowUpStatus @default(SCHEDULED)
+  scheduledFor    DateTime
+  subject         String
+  body            String
+  attempt         Int            @default(0)
+  errorMessage    String?
+  sentAt          DateTime?
+  cancelledAt     DateTime?
+  cancelReason    String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([status, scheduledFor])
+  @@index([applicationId])
+}
+
+model InboundReply {
+  id                String              @id @default(cuid())
+  applicationId     String
+  application       Application         @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  emailId           String?
+  email             Email?              @relation(fields: [emailId], references: [id], onDelete: SetNull)
+  provider          String              @default("manual")
+  providerMessageId String?
+  fromAddress       String
+  subject           String
+  body              String
+  receivedAt        DateTime
+  classification    ReplyClassification
+  confidence        Float
+  summary           String
+  metadata          Json?
+  createdAt         DateTime            @default(now())
+
+  @@unique([provider, providerMessageId])
+  @@index([applicationId, receivedAt])
+}
+
+model ApplicationBatch {
+  id             String                 @id @default(cuid())
+  userId         String
+  user           User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status         ApplicationBatchStatus @default(PENDING)
+  operations     BatchOperation[]
+  maxConcurrency Int                    @default(1)
+  items          ApplicationBatchItem[]
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+model ApplicationBatchItem {
+  id            String                     @id @default(cuid())
+  batchId       String
+  batch         ApplicationBatch           @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  applicationId String
+  application   Application                @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  status        ApplicationBatchItemStatus @default(PENDING)
+  currentStep   BatchOperation?
+  errorMessage  String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+
+  @@unique([batchId, applicationId])
+  @@index([applicationId])
+}
+
+// Legacy run records already exist in the configured database. The current
+// application-agent flow only uses fill-only preparation and explicit human
+// submission; this model is retained so migration history stays complete.
+model AutoApplyRun {
+  id            String       @id @default(cuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  company       String
+  role          String
+  applyUrl      String
+  mode          String       @default("fill_only")
+  status        String       @default("queued")
+  phase         String?
+  steps         Json         @default("[]")
+  stepCount     Int          @default(0)
+  result        String?
+  error         String?
+  startedAt     DateTime     @default(now())
+  finishedAt    DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, startedAt])
 }
 
 // ── Discovery ───────────────────────────────────────────────────────────────
@@ -254,15 +500,15 @@ model ScanRun {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  startedAt   DateTime  @default(now())
+  startedAt   DateTime   @default(now())
   finishedAt  DateTime? // null while running (or if the process died mid-run)
-  trigger     String    @default("manual") // "manual" | "cron" | "script"
-  created     Int       @default(0)
-  scored      Int       @default(0)
+  trigger     String     @default("manual") // "manual" | "cron" | "script"
+  created     Int        @default(0)
+  scored      Int        @default(0)
   sourceStats String? // JSON SourceStats[] — per-source fetched/created/dupes/errors
   error       String? // run-level failure or scoring error
   fetchRunId  String?
-  fetchRun    FetchRun? @relation(fields: [fetchRunId], references: [id], onDelete: SetNull)
+  fetchRun    FetchRun?  @relation(fields: [fetchRunId], references: [id], onDelete: SetNull)
   leads       UserLead[]
 
   @@index([userId, startedAt])
@@ -273,23 +519,23 @@ model ScanRun {
 model JobLead {
   id String @id @default(cuid())
 
-  source        String // "sheet" | "jobfound" | "greenhouse" | "lever" | "ashby" | "hn"
-  externalId    String // hygraph post id; for the sheet, a hash of company+role+date
-  sources       String? // comma-separated list when the same posting was found in multiple sources
-  company       String
-  role          String
-  location      String?
-  url           String? // raw apply URL (sheet rows occasionally have none)
-  canonicalUrl  String? // tracking params stripped — cross-source dedupe key
-  jdText        String?
-  salary        String?
-  jobType       String? // "Full Time" | "Internship"
-  experience    String?
-  skills        String?
-  postedAt      DateTime?
-  contactEmail  String? // hiring contact when the source includes one (HN posts often do)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  source       String // "sheet" | "jobfound" | "greenhouse" | "lever" | "ashby" | "hn"
+  externalId   String // hygraph post id; for the sheet, a hash of company+role+date
+  sources      String? // comma-separated list when the same posting was found in multiple sources
+  company      String
+  role         String
+  location     String?
+  url          String? // raw apply URL (sheet rows occasionally have none)
+  canonicalUrl String? // tracking params stripped — cross-source dedupe key
+  jdText       String?
+  salary       String?
+  jobType      String? // "Full Time" | "Internship"
+  experience   String?
+  skills       String?
+  postedAt     DateTime?
+  contactEmail String? // hiring contact when the source includes one (HN posts often do)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   userLeads UserLead[]
 
@@ -309,14 +555,14 @@ model UserLead {
   jobLeadId String
   jobLead   JobLead @relation(fields: [jobLeadId], references: [id], onDelete: Cascade)
 
-  status        String    @default("new") // new | promoted | dismissed
+  status        String   @default("new") // new | promoted | dismissed
   applicationId String? // set on promote
   score         Int? // LLM fit score 0-100 (this user's key/profile)
   scoreReason   String?
   scanRunId     String? // the user scan that scored/surfaced it for them
-  scanRun       ScanRun?  @relation(fields: [scanRunId], references: [id], onDelete: SetNull)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  scanRun       ScanRun? @relation(fields: [scanRunId], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@unique([userId, jobLeadId])
   @@index([userId, status])
@@ -349,18 +595,25 @@ model AtsCompany {
 // field is the DB-backed source of truth for the "Find contacts" task lifecycle —
 // it survives a tab close and lets the UI restore an in-flight run on reload.
 model CompanyContactCache {
-  id          String              @id @default(cuid())
-  domain      String              @unique // normalized registrable domain, e.g. "acme.com"
-  company     String? // display name from the lead that triggered enrichment
-  status      String              @default("idle") // idle | running | completed | failed
-  pattern     String? // inferred email pattern, e.g. "{first}.{last}"
-  sourceStats String? // JSON: per-lane found counts + errors
-  error       String?
-  startedAt   DateTime?
-  enrichedAt  DateTime? // last successful completion (drives the freshness TTL)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  contacts    DiscoveredContact[]
+  id             String              @id @default(cuid())
+  domain         String // normalized registrable domain, e.g. "acme.com"
+  // A contact search is user/provider-contextual and location-sensitive. The
+  // opaque key prevents a failed global search from poisoning a later India run.
+  intentKey      String              @unique
+  ownerUserId    String?
+  searchLocation String?
+  company        String? // display name from the lead that triggered enrichment
+  status         String              @default("idle") // idle | running | completed | failed
+  pattern        String? // inferred email pattern, e.g. "{first}.{last}"
+  sourceStats    String? // JSON: per-lane found counts + errors
+  error          String?
+  startedAt      DateTime?
+  enrichedAt     DateTime? // last successful completion (drives the freshness TTL)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  contacts       DiscoveredContact[]
+
+  @@index([ownerUserId, domain])
 }
 
 // One discovered person/email for a company (global, deduped by email per domain).
@@ -371,18 +624,22 @@ model DiscoveredContact {
   cacheId String
   cache   CompanyContactCache @relation(fields: [cacheId], references: [id], onDelete: Cascade)
 
-  name          String?
-  title         String?
-  email         String? // null = person located but address unresolved
-  linkedinUrl   String?
-  source        String // "lead" | "apollo" | "site" | "github" | "hn" | "portfolio" | "role_inbox" | "pattern"
-  sources       String? // comma-separated when multiple lanes agreed on the same email
-  confidence    Float   @default(0) // 0..1
-  verified      Boolean @default(false)
-  verifyMethod  String? // "published" | "apollo" | "mx" | "pattern"
-  seniorityRank Int     @default(0) // higher = more senior/relevant (founder > lead > recruiter > IC)
-  rank          Float   @default(0) // composite sort score (seniority × confidence × verified)
-  createdAt     DateTime @default(now())
+  name             String?
+  title            String?
+  email            String? // null = person located but address unresolved
+  phone            String?
+  linkedinUrl      String?
+  location         String?
+  providerPersonId String?
+  contactStatus    String   @default("not_requested") // not_requested | resolving | resolved | failed
+  source           String // "lead" | "apollo" | "signalhire" | "manual" | "site" | "github" | "hn" | "portfolio" | "role_inbox" | "pattern"
+  sources          String? // comma-separated when multiple lanes agreed on the same email
+  confidence       Float    @default(0) // 0..1
+  verified         Boolean  @default(false)
+  verifyMethod     String? // "published" | "apollo" | "mx" | "pattern"
+  seniorityRank    Int      @default(0) // higher = more senior/relevant (founder > lead > recruiter > IC)
+  rank             Float    @default(0) // composite sort score (seniority × confidence × verified)
+  createdAt        DateTime @default(now())
 
   @@index([cacheId])
 }
@@ -391,9 +648,9 @@ model DiscoveredContact {
 // Users without their own key fall back to this during the active window.
 model SharedDeepseekKey {
   id          Int      @id @default(1)
-  keyEnc      String   // AES-256-GCM encrypted via src/lib/crypto.ts
+  keyEnc      String // AES-256-GCM encrypted via src/lib/crypto.ts
   llmProvider String   @default("deepseek")
-  llmModel    String?  // optional model override
+  llmModel    String? // optional model override
   expiresAt   DateTime
   updatedAt   DateTime @updatedAt
 }
@@ -404,6 +661,7 @@ model Event {
   application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   type          String // "status_change" | "personalized" | "applied" | "email_sent" | "note"
   detail        String?
+  metadata      Json?
   createdAt     DateTime    @default(now())
 }
 
@@ -424,18 +682,18 @@ model InterviewSession {
   application   Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
 
   mode         String // "company" | "general"
-  persona      String  @default("neutral") // "neutral" | "friendly" | "stress"
-  roundType    String  @default("mixed") // "behavioral" | "technical" | "mixed"
+  persona      String          @default("neutral") // "neutral" | "friendly" | "stress"
+  roundType    String          @default("mixed") // "behavioral" | "technical" | "mixed"
   // null = untimed (runs until topics exhaust). Else a TARGET length in minutes:
   // topic count scales to it and the interviewer winds down to end ~around it.
   timeLimitMin Int?
-  status       String  @default("running") // running | completed | failed | abandoned
-  topics       Json    @default("[]") // planned seeds: [{ title, kind, seed }]
-  currentTopic Int     @default(0)
+  status       String          @default("running") // running | completed | failed | abandoned
+  topics       Json            @default("[]") // planned seeds: [{ title, kind, seed }]
+  currentTopic Int             @default(0)
   report       Json? // composed at wrap-up from the hidden per-turn assessments
-  startedAt    DateTime  @default(now())
+  startedAt    DateTime        @default(now())
   finishedAt   DateTime?
-  updatedAt    DateTime  @updatedAt
+  updatedAt    DateTime        @updatedAt
   turns        InterviewTurn[]
 
   @@index([userId, status])
@@ -452,7 +710,7 @@ model InterviewTurn {
 
   index      Int // monotonic order within the session
   topicIndex Int
-  depth      Int     @default(0) // how deep into this topic's thread
+  depth      Int      @default(0) // how deep into this topic's thread
   move       String // "SEED" | "DRILL" | "CHALLENGE" | "PIVOT" | "MOVE_ON"
   question   String // interviewer line (shown + spoken)
   answer     String? // candidate transcript (null until they respond)
