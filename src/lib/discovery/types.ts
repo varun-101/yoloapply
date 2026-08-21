@@ -2,7 +2,7 @@
 // these into JobLead rows (dedupe, canonical URLs, upsert).
 export interface RawLead {
   source: string; // "sheet" | "jobfound"
-  externalId: string; // stable per-source id (hygraph id; hash for sheet rows)
+  externalId: string; // stable per-source id (API id; hash for sheet rows)
   company: string;
   role: string;
   location?: string;

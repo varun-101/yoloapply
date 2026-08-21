@@ -553,7 +553,7 @@ model JobLead {
   id String @id @default(cuid())
 
   source       String // "sheet" | "jobfound" | "greenhouse" | "lever" | "ashby" | "hn" | "instahyre"
-  externalId   String // hygraph post id; for the sheet, a hash of company+role+date
+  externalId   String // source API id; for the sheet, a hash of company+role+date
   sources      String? // comma-separated list when the same posting was found in multiple sources
   company      String
   role         String

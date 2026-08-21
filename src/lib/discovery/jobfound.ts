@@ -1,60 +1,56 @@
 import { htmlToText } from "../html";
 import type { FetchResult, RawLead } from "./types";
 
-// jobfound.org is a thin Next.js front-end over a public Hygraph (GraphCMS)
-// project — the content API needs no auth. We query it directly instead of
-// scraping the site.
-const HYGRAPH_URL =
-  process.env.JOBFOUND_HYGRAPH_URL ??
-  "https://ap-south-1.cdn.hygraph.com/content/clyfggcvi02yv07uxmtl5gva8/master";
+// Jobfound's current site reads from this unauthenticated REST endpoint. The
+// previous public Hygraph project is still reachable, but stopped receiving
+// new postings in August 2026.
+const JOBFOUND_API_URL = process.env.JOBFOUND_API_URL ?? "https://jobfound.org/api/jobs";
 
-// Posts arrive in daily batches; don't bother ingesting anything older than this.
 const MAX_AGE_DAYS = 14;
 const PAGE_SIZE = 100;
-const MAX_PAGES = 3;
+// Safety valve for a malformed response that reports hasMore forever.
+const MAX_PAGES = 50;
 
-const QUERY = `
-  query JobPosts($first: Int, $skip: Int) {
-    jobPosts(orderBy: createdAt_DESC, first: $first, skip: $skip) {
-      id
-      title
-      slug
-      body { html }
-      salary
-      createdAt
-      skill { skills }
-      experience { experience }
-      domain { domain }
-      jobTypeReference { jobType }
-      apply
-      country { country }
-    }
-  }
-`;
-
-interface JobPost {
-  id: string;
+interface JobfoundJob {
+  $id: string;
   title: string;
-  slug: string;
-  body?: { html?: string } | null;
+  companyName: string;
+  description?: string | null;
+  jobType?: string | null;
   salary?: string | null;
-  createdAt: string;
-  skill?: { skills?: string } | { skills?: string }[] | null;
-  experience?: { experience?: string } | null;
-  domain?: { domain?: string } | null;
-  jobTypeReference?: { jobType?: string } | null;
-  apply?: string | null;
-  country?: { country?: string } | null;
+  experience?: string | null;
+  domain?: string | null;
+  location?: string | null;
+  country?: string | null;
+  skills?: string | null;
+  applyUrl?: string | null;
+  workplaceType?: string | null;
+  postedAt: string;
 }
 
-// Titles follow "Company is hiring for Role | Location". Fall back gracefully
-// when a post doesn't match the pattern.
-function parseTitle(title: string): { company: string; role: string; location?: string } {
-  const [head, ...locParts] = title.split("|");
-  const location = locParts.join("|").trim() || undefined;
-  const m = head.match(/^(.*?)\s+is hiring for\s+(.*)$/i);
-  if (m) return { company: m[1].trim(), role: m[2].trim(), location };
-  return { company: head.trim(), role: head.trim(), location };
+interface JobsResponse {
+  jobs?: JobfoundJob[];
+  total?: number;
+  page?: number;
+  limit?: number;
+  hasMore?: boolean;
+}
+
+function pageUrl(page: number): string {
+  const url = new URL(JOBFOUND_API_URL);
+  url.searchParams.set("page", String(page));
+  url.searchParams.set("limit", String(PAGE_SIZE));
+  url.searchParams.set("sort", "newest");
+  url.searchParams.set("country", "India");
+  url.searchParams.set("postedWithin", String(MAX_AGE_DAYS));
+  return url.toString();
+}
+
+function jobLocation(job: JobfoundJob): string | undefined {
+  const location = job.location?.trim();
+  if (location) return location;
+  if (job.workplaceType?.trim().toLowerCase() === "remote") return "Remote";
+  return job.country?.trim() || undefined;
 }
 
 export async function fetchJobfoundLeads(): Promise<FetchResult> {
@@ -62,59 +58,51 @@ export async function fetchJobfoundLeads(): Promise<FetchResult> {
     const cutoff = Date.now() - MAX_AGE_DAYS * 86400 * 1000;
     const leads: RawLead[] = [];
 
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const res = await fetch(HYGRAPH_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: QUERY,
-          variables: { first: PAGE_SIZE, skip: page * PAGE_SIZE },
-          operationName: "JobPosts",
-        }),
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const res = await fetch(pageUrl(page), {
+        headers: { Accept: "application/json" },
       });
-      if (!res.ok) throw new Error(`Hygraph returned HTTP ${res.status}`);
-      const json = (await res.json()) as {
-        data?: { jobPosts?: JobPost[] };
-        errors?: { message: string }[];
-      };
-      if (json.errors?.length) throw new Error(json.errors[0].message);
-      const posts = json.data?.jobPosts ?? [];
+      if (!res.ok) throw new Error(`Jobfound returned HTTP ${res.status}`);
+
+      const json = (await res.json()) as JobsResponse;
+      if (!Array.isArray(json.jobs)) throw new Error("Jobfound returned an invalid jobs response");
 
       let reachedCutoff = false;
-      for (const post of posts) {
-        const postedAt = new Date(post.createdAt);
+      for (const job of json.jobs) {
+        const postedAt = new Date(job.postedAt);
+        if (Number.isNaN(postedAt.getTime())) continue;
         if (postedAt.getTime() < cutoff) {
           reachedCutoff = true;
           break;
         }
-        // The feed also carries non-India listings (mostly US data-entry spam).
-        if ((post.country?.country ?? "").trim() !== "India") continue;
 
-        const { company, role, location } = parseTitle(post.title ?? "");
-        if (!company || !role) continue;
+        // The API applies this filter too, but keep the source boundary intact
+        // if its filtering behavior changes again.
+        if (job.country?.trim().toLowerCase() !== "india") continue;
 
-        const skills = Array.isArray(post.skill)
-          ? post.skill.map((s) => s?.skills).filter(Boolean).join(", ")
-          : post.skill?.skills;
-        const jdText = post.body?.html ? htmlToText(post.body.html) : undefined;
+        const externalId = job.$id?.trim();
+        const company = job.companyName?.trim();
+        const role = job.title?.trim();
+        if (!externalId || !company || !role) continue;
 
+        const jdText = job.description ? htmlToText(job.description) : undefined;
         leads.push({
           source: "jobfound",
-          externalId: post.id,
+          externalId,
           company,
           role,
-          location,
-          url: post.apply ?? undefined,
+          location: jobLocation(job),
+          url: job.applyUrl?.trim() || undefined,
           jdText: jdText && jdText.length >= 50 ? jdText : undefined,
-          salary: post.salary?.trim() || undefined,
-          jobType: post.jobTypeReference?.jobType ?? undefined,
-          experience: post.experience?.experience ?? undefined,
-          skills: skills || undefined,
+          salary: job.salary?.trim() || undefined,
+          jobType: job.jobType?.trim() || undefined,
+          experience: job.experience?.trim() || undefined,
+          skills: job.skills?.trim() || undefined,
           postedAt,
         });
       }
 
-      if (reachedCutoff || posts.length < PAGE_SIZE) break;
+      if (reachedCutoff || json.jobs.length === 0 || json.hasMore !== true) break;
     }
 
     return { source: "jobfound", leads };
