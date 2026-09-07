@@ -86,21 +86,33 @@ export interface ChatJsonOptions {
   temperature?: number;
 }
 
-// Calls DeepSeek with JSON output mode and returns the parsed object.
+const CHAT_JSON_ATTEMPTS = 3;
+const MAX_TRUNCATION_RETRY_TOKENS = 32768;
+
+// A length-limited response will usually fail in exactly the same way if it is
+// retried with the same max_tokens value. Grow only those retries; ordinary
+// empty/malformed responses retain the caller's original budget.
+function nextTokenBudget(current: number, finishReason: string | null | undefined): number {
+  if (finishReason !== "length") return current;
+  return Math.min(current * 2, Math.max(current, MAX_TRUNCATION_RETRY_TOKENS));
+}
+
+// Calls an OpenAI-compatible provider in JSON output mode and returns the parsed object.
 //
-// DeepSeek's reasoning models (deepseek-v4-pro / deepseek-reasoner) spend a chunk
-// of the budget in a separate `reasoning_content` channel. Two failure modes show
+// Some reasoning models spend a chunk of the budget in a separate
+// `reasoning_content` channel. Two failure modes show
 // up: (1) the visible `content` comes back empty even with finish_reason=stop, and
 // (2) the model occasionally emits the JSON into `reasoning_content` instead of
 // `content`. We handle both: try content, then salvage from reasoning_content,
 // then retry a couple of times before giving up. We also give the reasoner extra
 // headroom by default so it doesn't truncate mid-answer.
 export async function chatJson<T = unknown>(opts: ChatJsonOptions): Promise<T> {
-  const maxTokens = opts.maxTokens ?? 8192;
+  let maxTokens = opts.maxTokens ?? 8192;
   const model = opts.model ?? LLM_MODEL;
-  const attempts = 3;
+  const attempts = CHAT_JSON_ATTEMPTS;
   let lastInfo = "";
   let lastParseErr: Error | null = null;
+  let lastFinishReason = "unknown";
 
   for (let i = 0; i < attempts; i++) {
     const resp = await llm(opts.apiKey, opts.baseURL).chat.completions.create({
@@ -117,6 +129,9 @@ export async function chatJson<T = unknown>(opts: ChatJsonOptions): Promise<T> {
     const msg = resp.choices[0]?.message as
       | { content?: string | null; reasoning_content?: string | null }
       | undefined;
+    const finish = resp.choices[0]?.finish_reason ?? "unknown";
+    const used = resp.usage?.completion_tokens ?? "?";
+    const attemptInfo = `finish_reason=${finish}, completion_tokens=${used}, max_tokens=${maxTokens}, attempt ${i + 1}/${attempts}`;
     const content = msg?.content ?? "";
 
     if (content) {
@@ -126,7 +141,9 @@ export async function chatJson<T = unknown>(opts: ChatJsonOptions): Promise<T> {
         // Malformed JSON (e.g. an unescaped quote in a field) — retry; the model
         // usually returns clean JSON on another pass.
         lastParseErr = e instanceof Error ? e : new Error(String(e));
-        lastInfo = `content parse failed: ${lastParseErr.message}, attempt ${i + 1}/${attempts}`;
+        lastFinishReason = finish;
+        lastInfo = `${attemptInfo}, content parse failed: ${lastParseErr.message}`;
+        maxTokens = nextTokenBudget(maxTokens, finish);
         continue;
       }
     }
@@ -142,11 +159,17 @@ export async function chatJson<T = unknown>(opts: ChatJsonOptions): Promise<T> {
       }
     }
 
-    const finish = resp.choices[0]?.finish_reason ?? "unknown";
-    const used = resp.usage?.completion_tokens ?? "?";
-    lastInfo = `finish_reason=${finish}, completion_tokens=${used}, attempt ${i + 1}/${attempts}`;
+    lastFinishReason = finish;
+    lastInfo = attemptInfo;
+    maxTokens = nextTokenBudget(maxTokens, finish);
   }
 
+  if (lastFinishReason === "length") {
+    throw new Error(
+      `LLM response was truncated before it produced JSON after ${attempts} attempts (${lastInfo}). ` +
+        "Choose a non-reasoning model or one with a larger output limit."
+    );
+  }
   if (lastParseErr) {
     throw new Error(
       `LLM returned unparseable JSON after ${attempts} attempts (${lastInfo}).`
@@ -154,6 +177,6 @@ export async function chatJson<T = unknown>(opts: ChatJsonOptions): Promise<T> {
   }
   throw new Error(
     `LLM returned empty content after ${attempts} attempts (${lastInfo}). ` +
-      "This is a DeepSeek reasoning-model quirk; retrying usually clears it."
+      "The provider returned no usable JSON."
   );
 }
