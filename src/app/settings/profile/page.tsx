@@ -1,9 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Textarea } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { AlertCircle, FileUp, Loader2, Plus, Save, Sparkles, Trash2 } from "lucide-react";
+import type { ResumeImportProfile } from "@/lib/resumeImport";
 
 interface Education {
   degree: string;
@@ -44,6 +45,17 @@ const EMPTY_APPLICATION_ANSWERS: ApplicationAnswers = {
   currentLocation: "",
 };
 
+interface ImportInfo {
+  filename: string;
+  pages: number;
+  filled: number;
+}
+
+interface MissingField {
+  id: string;
+  label: string;
+}
+
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
     <label className="block">
@@ -61,6 +73,9 @@ export default function ProfileSettings() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importInfo, setImportInfo] = useState<ImportInfo | null>(null);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -79,6 +94,33 @@ export default function ProfileSettings() {
   const [applicationAnswers, setApplicationAnswers] = useState<ApplicationAnswers>(EMPTY_APPLICATION_ANSWERS);
   const [followUpDelayDays, setFollowUpDelayDays] = useState(5);
   const [recruiterLocation, setRecruiterLocation] = useState("");
+
+  const missingFields = useMemo<MissingField[]>(() => {
+    if (!importInfo) return [];
+    const fields: Array<MissingField & { value: string }> = [
+      { id: "profile-name", label: "Full name", value: name },
+      { id: "profile-email", label: "Contact email", value: email },
+      { id: "profile-phone", label: "Phone", value: phone },
+      { id: "profile-years-experience", label: "Years of experience", value: yoe },
+      { id: "profile-city", label: "City", value: city },
+      { id: "profile-country", label: "Country", value: country },
+      { id: "profile-current-location", label: "Current location", value: applicationAnswers.currentLocation },
+      { id: "profile-notice-period", label: "Notice period", value: applicationAnswers.noticePeriod },
+      { id: "profile-work-authorization", label: "Work authorization", value: applicationAnswers.workAuthorization },
+      { id: "profile-sponsorship", label: "Sponsorship", value: applicationAnswers.sponsorship },
+      { id: "profile-relocation", label: "Willing to relocate", value: applicationAnswers.willingToRelocate },
+      { id: "profile-degree", label: "Degree", value: education.degree },
+      { id: "profile-school", label: "School", value: education.school },
+      { id: "profile-graduation", label: "Graduation", value: education.grad },
+    ];
+    return fields.filter((field) => !field.value.trim()).map(({ id, label }) => ({ id, label }));
+  }, [applicationAnswers, city, country, education, email, importInfo, name, phone, yoe]);
+
+  function attentionClass(id: string): string | undefined {
+    return missingFields.some((field) => field.id === id)
+      ? "border-amber-400 bg-amber-50/60 focus:border-amber-500 focus:ring-amber-500 dark:border-amber-700 dark:bg-amber-950/20"
+      : undefined;
+  }
 
   useEffect(() => {
     fetch("/api/settings/profile")
@@ -137,6 +179,99 @@ export default function ProfileSettings() {
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
   }, []);
+
+  async function importResume() {
+    if (!resumeFile) return;
+    setImporting(true);
+    setErr(null);
+    setSaved(false);
+    setImportInfo(null);
+    try {
+      const form = new FormData();
+      form.set("file", resumeFile);
+      const response = await fetch("/api/settings/profile/import-resume", { method: "POST", body: form });
+      const data = (await response.json()) as {
+        profile?: ResumeImportProfile;
+        pages?: number;
+        error?: string;
+      };
+      if (!response.ok || !data.profile) throw new Error(data.error ?? "Resume import failed");
+
+      const imported = data.profile;
+      const choose = (current: string, candidate: string) => current.trim() ? current : candidate.trim();
+      const importedExperience: Experience[] = imported.experience.map((entry) => ({
+        title: entry.title,
+        company: entry.company,
+        period: entry.period,
+        location: entry.location,
+        bullets: entry.bullets.join("\n"),
+      }));
+      const importedExtras: Extra[] = imported.extras.map((entry) => ({
+        title: entry.title,
+        org: entry.org,
+        period: entry.period,
+        summary: entry.summary,
+      }));
+      const importedLocation = [imported.city, imported.country].filter(Boolean).join(", ");
+
+      const scalarPairs: Array<[string, string]> = [
+        [name, imported.name],
+        [email, imported.email],
+        [phone, imported.phone],
+        [city, imported.city],
+        [country, imported.country],
+        [yoe, imported.yearsOfExperience],
+        [github, imported.github],
+        [githubHandle, imported.githubHandle],
+        [linkedin, imported.linkedin],
+        [linkedinHandle, imported.linkedinHandle],
+        [portfolio, imported.portfolio],
+        [education.degree, imported.education?.degree ?? ""],
+        [education.school, imported.education?.school ?? ""],
+        [education.cgpa, imported.education?.cgpa ?? ""],
+        [education.grad, imported.education?.grad ?? ""],
+        [applicationAnswers.currentLocation, importedLocation],
+      ];
+      let filled = scalarPairs.filter(([current, candidate]) => !current.trim() && candidate.trim()).length;
+      if (experience.length === 0 && importedExperience.length > 0) filled += 1;
+      if (extras.length === 0 && importedExtras.length > 0) filled += 1;
+
+      setName((current) => choose(current, imported.name));
+      setEmail((current) => choose(current, imported.email));
+      setPhone((current) => choose(current, imported.phone));
+      setCity((current) => choose(current, imported.city));
+      setCountry((current) => choose(current, imported.country));
+      setYoe((current) => choose(current, imported.yearsOfExperience));
+      setGithub((current) => choose(current, imported.github));
+      setGithubHandle((current) => choose(current, imported.githubHandle));
+      setLinkedin((current) => choose(current, imported.linkedin));
+      setLinkedinHandle((current) => choose(current, imported.linkedinHandle));
+      setPortfolio((current) => choose(current, imported.portfolio));
+      setEducation((current) => ({
+        degree: choose(current.degree, imported.education?.degree ?? ""),
+        school: choose(current.school, imported.education?.school ?? ""),
+        cgpa: choose(current.cgpa, imported.education?.cgpa ?? ""),
+        grad: choose(current.grad, imported.education?.grad ?? ""),
+      }));
+      setExperience((current) => current.length > 0 ? current : importedExperience);
+      setExtras((current) => current.length > 0 ? current : importedExtras);
+      setApplicationAnswers((current) => ({
+        ...current,
+        currentLocation: choose(current.currentLocation, importedLocation),
+      }));
+      setImportInfo({ filename: resumeFile.name, pages: data.pages ?? 0, filled });
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function focusMissingField(id: string) {
+    const element = document.getElementById(id);
+    element?.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => element?.focus(), 350);
+  }
 
   async function save() {
     setSaving(true);
@@ -220,28 +355,108 @@ export default function ProfileSettings() {
         </div>
       )}
 
+      <Card className="border-signal/30 bg-signal/[0.03]">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-signal-deep dark:text-signal" />
+            Import profile from resume
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            Upload a text-based PDF and AI will fill the empty fields below. Existing profile data is preserved,
+            and nothing is saved until you review it and select <span className="font-medium">Save profile</span>.
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Input
+              type="file"
+              accept="application/pdf,.pdf"
+              disabled={importing}
+              onChange={(event) => {
+                setResumeFile(event.target.files?.[0] ?? null);
+                setImportInfo(null);
+                setErr(null);
+              }}
+              className="file:mr-3 file:border-0 file:bg-transparent file:text-sm file:font-medium"
+            />
+            <Button onClick={importResume} disabled={!resumeFile || importing} className="w-full shrink-0 sm:w-auto">
+              {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
+              {importing ? "Reading resume…" : "Fill profile"}
+            </Button>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Resume text is sent to your configured AI provider for extraction and is not stored by this import.
+            It does not replace your generic resume or infer work authorization, sponsorship, notice period, or
+            relocation preferences.
+          </p>
+        </CardContent>
+      </Card>
+
+      {importInfo && (
+        <div
+          className={`rounded-md border px-4 py-3 text-sm ${
+            missingFields.length
+              ? "border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+              : "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+          }`}
+        >
+          <div className="flex items-start gap-2">
+            {missingFields.length ? (
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            ) : (
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+            )}
+            <div>
+              <div className="font-medium">
+                Filled {importInfo.filled} empty field{importInfo.filled === 1 ? "" : "s"} from {importInfo.filename}
+                {importInfo.pages ? ` (${importInfo.pages} page${importInfo.pages === 1 ? "" : "s"})` : ""}.
+              </div>
+              {missingFields.length ? (
+                <>
+                  <p className="mt-1 text-xs opacity-80">Please complete these before saving:</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {missingFields.map((field) => (
+                      <button
+                        key={field.id}
+                        type="button"
+                        onClick={() => focusMissingField(field.id)}
+                        className="rounded-full border border-amber-300 bg-white/70 px-2 py-1 text-xs hover:bg-white dark:border-amber-800 dark:bg-amber-950/50 dark:hover:bg-amber-950"
+                      >
+                        {field.label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="mt-1 text-xs opacity-80">Everything essential is filled. Review the draft, then save it.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Identity</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Full name">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ada Lovelace" />
+            <Input id="profile-name" className={attentionClass("profile-name")} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ada Lovelace" />
           </Field>
           <Field label="Contact email" hint="Printed on the resume — can differ from your login email.">
-            <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+            <Input id="profile-email" className={attentionClass("profile-email")} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
           </Field>
           <Field label="Phone">
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 ..." />
+            <Input id="profile-phone" className={attentionClass("profile-phone")} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 ..." />
           </Field>
           <Field label="Years of experience">
-            <Input value={yoe} onChange={(e) => setYoe(e.target.value)} placeholder="0.5" />
+            <Input id="profile-years-experience" className={attentionClass("profile-years-experience")} value={yoe} onChange={(e) => setYoe(e.target.value)} placeholder="0.5" />
           </Field>
           <Field label="City">
-            <Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Mumbai" />
+            <Input id="profile-city" className={attentionClass("profile-city")} value={city} onChange={(e) => setCity(e.target.value)} placeholder="Mumbai" />
           </Field>
           <Field label="Country">
-            <Input value={country} onChange={(e) => setCountry(e.target.value)} placeholder="India" />
+            <Input id="profile-country" className={attentionClass("profile-country")} value={country} onChange={(e) => setCountry(e.target.value)} placeholder="India" />
           </Field>
         </CardContent>
       </Card>
@@ -280,6 +495,8 @@ export default function ProfileSettings() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Current location">
               <Input
+                id="profile-current-location"
+                className={attentionClass("profile-current-location")}
                 value={applicationAnswers.currentLocation}
                 onChange={(e) => setApplicationAnswers({ ...applicationAnswers, currentLocation: e.target.value })}
                 placeholder="Mumbai, India"
@@ -287,6 +504,8 @@ export default function ProfileSettings() {
             </Field>
             <Field label="Notice period">
               <Input
+                id="profile-notice-period"
+                className={attentionClass("profile-notice-period")}
                 value={applicationAnswers.noticePeriod}
                 onChange={(e) => setApplicationAnswers({ ...applicationAnswers, noticePeriod: e.target.value })}
                 placeholder="Immediate / 30 days"
@@ -294,6 +513,8 @@ export default function ProfileSettings() {
             </Field>
             <Field label="Work authorization">
               <Input
+                id="profile-work-authorization"
+                className={attentionClass("profile-work-authorization")}
                 value={applicationAnswers.workAuthorization}
                 onChange={(e) => setApplicationAnswers({ ...applicationAnswers, workAuthorization: e.target.value })}
                 placeholder="Your exact answer"
@@ -301,6 +522,8 @@ export default function ProfileSettings() {
             </Field>
             <Field label="Sponsorship">
               <Input
+                id="profile-sponsorship"
+                className={attentionClass("profile-sponsorship")}
                 value={applicationAnswers.sponsorship}
                 onChange={(e) => setApplicationAnswers({ ...applicationAnswers, sponsorship: e.target.value })}
                 placeholder="Your exact answer"
@@ -308,6 +531,8 @@ export default function ProfileSettings() {
             </Field>
             <Field label="Willing to relocate">
               <Input
+                id="profile-relocation"
+                className={attentionClass("profile-relocation")}
                 value={applicationAnswers.willingToRelocate}
                 onChange={(e) => setApplicationAnswers({ ...applicationAnswers, willingToRelocate: e.target.value })}
                 placeholder="Yes / No / Depends on location"
@@ -343,6 +568,8 @@ export default function ProfileSettings() {
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Degree">
             <Input
+              id="profile-degree"
+              className={attentionClass("profile-degree")}
               value={education.degree}
               onChange={(e) => setEducation({ ...education, degree: e.target.value })}
               placeholder="B.E. Computer Engineering"
@@ -350,6 +577,8 @@ export default function ProfileSettings() {
           </Field>
           <Field label="School">
             <Input
+              id="profile-school"
+              className={attentionClass("profile-school")}
               value={education.school}
               onChange={(e) => setEducation({ ...education, school: e.target.value })}
               placeholder="University name"
@@ -364,6 +593,8 @@ export default function ProfileSettings() {
           </Field>
           <Field label="Graduation">
             <Input
+              id="profile-graduation"
+              className={attentionClass("profile-graduation")}
               value={education.grad}
               onChange={(e) => setEducation({ ...education, grad: e.target.value })}
               placeholder="2026"

@@ -27,7 +27,7 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
   gemini: {
     label: "Google Gemini",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
-    defaultModel: "gemini-2.0-flash",
+    defaultModel: "gemini-3.8-flash",
     keyHint: "AIza…",
     docsUrl: "https://aistudio.google.com/apikey",
   },
