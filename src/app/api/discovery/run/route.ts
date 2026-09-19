@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireUser, requireScanPermission, apiError } from "@/lib/auth";
-import { startUserScan, getUserScanProgress } from "@/lib/discovery/pipeline";
+import { startUserScan, getUserScanProgress, EXPECTED_SOURCE_COUNT } from "@/lib/discovery/pipeline";
 import { SCAN_STALE_MS } from "@/lib/discovery/types";
 
 export const maxDuration = 300;
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
           trigger: open.trigger,
           phase: open.trigger === "manual" ? "running" : "running (scheduled scan)",
           sourcesDone: 0,
-          sourcesTotal: 4,
+          sourcesTotal: EXPECTED_SOURCE_COUNT,
           created: open.created,
         },
       });

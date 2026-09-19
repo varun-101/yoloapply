@@ -97,6 +97,39 @@ function nextTokenBudget(current: number, finishReason: string | null | undefine
   return Math.min(current * 2, Math.max(current, MAX_TRUNCATION_RETRY_TOKENS));
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// OpenAI-compatible gateways occasionally return a plain-text 5xx body with a
+// successful/incorrect content type. The SDK then surfaces a SyntaxError such
+// as `"upstream error" is not valid JSON`, which is just as transient as a 502.
+// Do not retry auth, permission, or validation failures.
+function isRetryableProviderError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+
+  const candidate = error as { status?: unknown; name?: unknown; message?: unknown };
+  const status = typeof candidate.status === "number" ? candidate.status : undefined;
+  if (status !== undefined) {
+    return status === 408 || status === 409 || status === 429 || status >= 500;
+  }
+
+  const name = typeof candidate.name === "string" ? candidate.name : "";
+  if (name === "APIUserAbortError") return false;
+  if (name === "APIConnectionError" || name === "APIConnectionTimeoutError") return true;
+
+  const message = errorMessage(error).toLowerCase();
+  return (
+    error instanceof SyntaxError &&
+    (message.includes("not valid json") || message.includes("unexpected token"))
+  ) || message.includes("upstream error");
+}
+
+async function waitBeforeProviderRetry(attempt: number): Promise<void> {
+  if (process.env.NODE_ENV === "test") return;
+  await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+}
+
 // Calls an OpenAI-compatible provider in JSON output mode and returns the parsed object.
 //
 // Some reasoning models spend a chunk of the budget in a separate
@@ -115,21 +148,41 @@ export async function chatJson<T = unknown>(opts: ChatJsonOptions): Promise<T> {
   let lastFinishReason = "unknown";
 
   for (let i = 0; i < attempts; i++) {
-    const resp = await llm(opts.apiKey, opts.baseURL).chat.completions.create({
-      model,
-      max_tokens: maxTokens,
-      temperature: opts.temperature ?? 0.4,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: opts.system },
-        { role: "user", content: opts.user },
-      ],
-    });
+    let resp: OpenAI.Chat.Completions.ChatCompletion;
+    try {
+      resp = await llm(opts.apiKey, opts.baseURL).chat.completions.create({
+        model,
+        max_tokens: maxTokens,
+        temperature: opts.temperature ?? 0.4,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: opts.system },
+          { role: "user", content: opts.user },
+        ],
+      });
+    } catch (error: unknown) {
+      if (!isRetryableProviderError(error)) throw error;
 
-    const msg = resp.choices[0]?.message as
+      lastParseErr = null;
+      lastFinishReason = "provider_error";
+      lastInfo = `provider error: ${errorMessage(error).slice(0, 300)}, max_tokens=${maxTokens}, attempt ${i + 1}/${attempts}`;
+      if (i < attempts - 1) {
+        await waitBeforeProviderRetry(i);
+        continue;
+      }
+      throw new Error(`LLM provider failed after ${attempts} attempts (${lastInfo}).`);
+    }
+
+    // `choices` is optional-chained, not indexed directly: a gateway that
+    // answers 200 with an error-shaped body (no choices array at all) used to
+    // throw "Cannot read properties of undefined (reading '0')" from here,
+    // OUTSIDE the retry loop's catch, killing the whole caller. A discovery
+    // scan died that way. Treat it as an empty attempt and let the loop retry.
+    const choice = resp.choices?.[0];
+    const msg = choice?.message as
       | { content?: string | null; reasoning_content?: string | null }
       | undefined;
-    const finish = resp.choices[0]?.finish_reason ?? "unknown";
+    const finish = choice?.finish_reason ?? "unknown";
     const used = resp.usage?.completion_tokens ?? "?";
     const attemptInfo = `finish_reason=${finish}, completion_tokens=${used}, max_tokens=${maxTokens}, attempt ${i + 1}/${attempts}`;
     const content = msg?.content ?? "";

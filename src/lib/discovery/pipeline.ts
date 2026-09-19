@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
-import { fetchAtsLeads } from "./ats";
+import { ATS_SOURCES, fetchAtsLeads } from "./ats";
 import { runFundingScan } from "./funding";
 import { fetchHnLeads } from "./hn";
 import { fetchInstahyreLeads } from "./instahyre";
@@ -11,7 +11,7 @@ import { fetchSheetLeads } from "./sheet";
 import { fetchWeWorkRemotelyLeads } from "./weworkremotely";
 import { scoreNewLeads, type ScoreOptions } from "./score";
 import { ensureSearchPrefs, type SearchPrefs } from "../searchPrefs";
-import type { FetchResult, RawLead } from "./types";
+import { SCAN_STALE_MS, type FetchResult, type RawLead } from "./types";
 import { canonicalizeJobUrl } from "../jobs/url";
 
 // Multi-user discovery: the four sources are fetched ONCE per tick and ingested
@@ -97,15 +97,66 @@ interface GlobalFetchOutput {
 
 interface GlobalFetchState {
   promise: Promise<GlobalFetchOutput>;
+  startedAt: number;
   sourcesDone: number;
   sourcesTotal: number;
 }
+
+// Every source is bounded by a wall clock, and so is the fetch as a whole.
+// Individual HTTP requests already carry AbortSignal.timeout, but the waits
+// AROUND them do not (a Prisma query against the pooled connection, a provider
+// SDK call with its own retry budget), so a source CAN stop settling
+// altogether. When it does, `await Promise.all(sources)` never returns, the
+// global lock is never released, and because every later tick and every manual
+// "Scan now" JOINS the in-flight promise, discovery is dead process-wide until
+// a redeploy. That is exactly what happened in production: one 21:00 FetchRun
+// stayed open for three days while the UI counted up "7/8 sources done".
+//
+// A source that blows its deadline is recorded as a failed source (the same
+// partial-failure path a network error already takes) and the fetch moves on.
+// The abandoned promise is left running (nothing here can kill work already in
+// flight), but it no longer holds anything hostage.
+const SOURCE_DEADLINE_MS = 8 * 60_000;
+// Backstop for the whole run, covering the phases outside the source fan-out
+// (the catalog ingest). Deliberately larger than one source's deadline.
+const GLOBAL_FETCH_MAX_AGE_MS = 20 * 60_000;
+
+// Resolves with `fallback(reason)` if `p` neither settles within `ms` nor
+// settles successfully. Rejections become a failed result too: one source
+// throwing (an ATS bookkeeping write failing, say) should not sink the rest of
+// the catalog refresh.
+export function withDeadline<T>(
+  label: string,
+  p: Promise<T>,
+  fallback: (reason: string) => T,
+  ms: number = SOURCE_DEADLINE_MS
+): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(
+      () => resolve(fallback(`${label} exceeded its ${Math.round(ms / 60_000)} min deadline`)),
+      ms
+    );
+    p.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (e: unknown) => {
+        clearTimeout(timer);
+        resolve(fallback(e instanceof Error ? e.message : String(e)));
+      }
+    );
+  });
+}
+
+const failedSource = (source: string) => (error: string): FetchResult => ({ source, leads: [], error });
+const failedAts = (error: string): FetchResult[] => ATS_SOURCES.map((s) => failedSource(s)(error));
 
 // Opening estimate for the progress UI, shown for the moment between "scan
 // started" and the fetch actually kicking off. doGlobalFetch overwrites it with
 // the real count, so adding a source can never desync the two (the old fixed 4
 // is what produced "6/4 sources done").
-const EXPECTED_SOURCE_COUNT = 8;
+export const EXPECTED_SOURCE_COUNT = 8;
 
 // Locks and progress live on globalThis so they survive dev HMR (same trick as
 // the PrismaClient cache in db.ts) and are visible to the status GET handler.
@@ -131,9 +182,18 @@ function patchProgress(userId: string, patch: Partial<DiscoveryProgress>) {
   if (p) Object.assign(p, patch);
 }
 
+// A progress entry older than the stale cutoff belongs to a run that is no
+// longer making any: reporting it keeps the dashboard pinned to a banner like
+// "running for 1159m". Treat it as dead, exactly as the status route already
+// treats an old open ScanRun row, so the UI falls back to the last finished run.
+function isStaleProgress(p: { startedAt: string }): boolean {
+  return Date.now() - new Date(p.startedAt).getTime() > SCAN_STALE_MS;
+}
+
 export function getUserScanProgress(userId: string): DiscoveryProgress | null {
   const p = progressMap().get(userId);
   if (!p) return null;
+  if (isStaleProgress(p)) return null;
   // While the shared fetch runs, its source counter is the real progress —
   // both halves of it, or the ratio reads wrong.
   if (p.phase === "fetching sources" && g.__globalFetch) {
@@ -155,18 +215,26 @@ export function runGlobalFetch(
   trigger: "manual" | "cron" | "script",
   extraUserIds: string[] = []
 ): Promise<GlobalFetchOutput> {
-  if (!g.__globalFetch) {
-    const state: GlobalFetchState = {
-      promise: Promise.resolve(null as never), // replaced synchronously below
-      sourcesDone: 0,
-      sourcesTotal: EXPECTED_SOURCE_COUNT,
-    };
-    g.__globalFetch = state;
-    state.promise = doGlobalFetch(trigger, extraUserIds, state).finally(() => {
-      g.__globalFetch = null;
-    });
+  const current = g.__globalFetch;
+  if (current && Date.now() - current.startedAt < GLOBAL_FETCH_MAX_AGE_MS) {
+    return current.promise;
   }
-  return g.__globalFetch.promise;
+  // Past that age the in-flight run is wedged (the source deadlines above mean
+  // a healthy run cannot reach it). Abandon it and start clean rather than
+  // handing the caller a promise that will never settle.
+  const state: GlobalFetchState = {
+    promise: Promise.resolve(null as never), // replaced synchronously below
+    startedAt: Date.now(),
+    sourcesDone: 0,
+    sourcesTotal: EXPECTED_SOURCE_COUNT,
+  };
+  g.__globalFetch = state;
+  // Identity-checked: an abandoned run settling later must not clear the lock
+  // belonging to the run that replaced it.
+  state.promise = doGlobalFetch(trigger, extraUserIds, state).finally(() => {
+    if (g.__globalFetch === state) g.__globalFetch = null;
+  });
+  return state.promise;
 }
 
 async function doGlobalFetch(
@@ -201,17 +269,23 @@ async function doGlobalFetch(
         state.sourcesDone++;
         return r;
       });
+    // Every source is deadline-bounded (see withDeadline) so one that stops
+    // settling can't hold the global lock, and with it all of discovery,
+    // hostage. The counter advances on a timeout too, or the progress UI would
+    // sit on "7/8" while the run is already moving on without it.
+    const source = <T,>(label: string, p: Promise<T>, fallback: (reason: string) => T) =>
+      tick(withDeadline(label, p, fallback));
     // Kicked off together; the array is also what the progress UI counts, so
     // the total can't fall out of step with the sources actually being fetched.
     const sources = [
-      tick(fetchSheetLeads()),
-      tick(fetchJobfoundLeads()),
-      tick(fetchAtsLeads(prefsList, seenByAll)),
-      tick(fetchHnLeads(seenByAll)),
-      tick(fetchWeWorkRemotelyLeads(prefsList)),
-      tick(fetchRemoteOkLeads(prefsList)),
-      tick(fetchRemotiveLeads(prefsList)),
-      tick(fetchInstahyreLeads(prefsList, seenByAll)),
+      source("sheet", fetchSheetLeads(), failedSource("sheet")),
+      source("jobfound", fetchJobfoundLeads(), failedSource("jobfound")),
+      source("ATS boards", fetchAtsLeads(prefsList, seenByAll), failedAts),
+      source("hn", fetchHnLeads(seenByAll), failedSource("hn")),
+      source("weworkremotely", fetchWeWorkRemotelyLeads(prefsList), failedSource("weworkremotely")),
+      source("remoteok", fetchRemoteOkLeads(prefsList), failedSource("remoteok")),
+      source("remotive", fetchRemotiveLeads(prefsList), failedSource("remotive")),
+      source("instahyre", fetchInstahyreLeads(prefsList, seenByAll), failedSource("instahyre")),
     ] as const;
     state.sourcesTotal = sources.length;
 
@@ -220,8 +294,9 @@ async function doGlobalFetch(
       // Funding radar runs alongside the lead sources but isn't one: it produces
       // no JobLeads (so it's not ticked or ingested) — it refreshes the radar and
       // folds any freshly-funded company's live board into the watchlist for the
-      // NEXT tick. Best-effort; a failure must not sink the catalog refresh.
-      runFundingScan().catch(() => null),
+      // NEXT tick. Best-effort; a failure must not sink the catalog refresh —
+      // and it's awaited here, so it needs the same deadline as a real source.
+      withDeadline("funding radar", runFundingScan(), () => null),
     ]);
     const results = [sheet, jobfound, ...ats, hn, wwr, remoteok, remotive, instahyre];
 
@@ -467,7 +542,11 @@ export function runUserScan(
 ): Promise<UserScanResult> {
   const scans = userScans();
   const existing = scans.get(userId);
-  if (existing) return existing;
+  const existingProgress = progressMap().get(userId);
+  // Join a live scan; abandon a wedged one. Without the staleness check a scan
+  // that never settles locks this user out of scanning for the life of the
+  // process, and "Scan now" answers already_running forever.
+  if (existing && existingProgress && !isStaleProgress(existingProgress)) return existing;
 
   progressMap().set(userId, {
     scanRunId: null,
@@ -492,8 +571,12 @@ export function runUserScan(
     });
     return fanOutUser(userId, fetched, trigger);
   })().finally(() => {
-    scans.delete(userId);
-    progressMap().delete(userId);
+    // Identity-checked: an abandoned scan settling later must not clear the
+    // lock or progress of the scan that replaced it.
+    if (scans.get(userId) === p) {
+      scans.delete(userId);
+      progressMap().delete(userId);
+    }
   });
   scans.set(userId, p);
   return p;
@@ -505,7 +588,7 @@ export function startUserScan(userId: string): {
   alreadyRunning: boolean;
   progress: DiscoveryProgress;
 } {
-  const alreadyRunning = userScans().has(userId);
+  const alreadyRunning = getUserScanProgress(userId) !== null;
   if (!alreadyRunning) {
     runUserScan(userId, "manual").catch(() => {});
   }

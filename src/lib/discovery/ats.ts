@@ -186,6 +186,11 @@ const FETCHERS = {
   ashby: fetchAshby,
 } as const;
 
+// One fetcher call covers all three board types, but it reports one FetchResult
+// per type, so the pipeline needs the labels to stand a failure row up for
+// each when the whole ATS sweep fails or times out.
+export const ATS_SOURCES = Object.keys(FETCHERS);
+
 function summarizeErrors(errors: string[]): string | undefined {
   if (!errors.length) return undefined;
   if (errors.length <= 3) return errors.join("; ");
