@@ -2,7 +2,6 @@ import { spawn } from "child_process";
 import { mkdir, writeFile, readFile, rm } from "fs/promises";
 import path from "path";
 import os from "os";
-import { PDFDocument } from "pdf-lib";
 import { saveFile } from "./files";
 
 function which(bin: string): Promise<string | null> {
@@ -142,20 +141,4 @@ export async function saveCoverLetterPdf(
   pdfFilename: string
 ): Promise<void> {
   await saveFile(userId, applicationId, "cover_letter_pdf", pdfFilename, pdf);
-}
-
-export async function countPdfPages(pdf: Buffer): Promise<number> {
-  const doc = await PDFDocument.load(pdf, { ignoreEncryption: true, updateMetadata: false });
-  return doc.getPageCount();
-}
-
-// Drop every page after the first. Last-resort safety net when even the tightest
-// regeneration still overflowed.
-export async function clipToFirstPage(pdf: Buffer): Promise<Buffer> {
-  const doc = await PDFDocument.load(pdf, { ignoreEncryption: true, updateMetadata: false });
-  const total = doc.getPageCount();
-  if (total <= 1) return pdf;
-  for (let i = total - 1; i >= 1; i--) doc.removePage(i);
-  const bytes = await doc.save();
-  return Buffer.from(bytes);
 }

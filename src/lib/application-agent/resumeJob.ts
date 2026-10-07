@@ -1,6 +1,6 @@
 import { prisma } from "../db";
 import { ApiUserError } from "../auth";
-import { personalizeOnePage } from "../onePage";
+import { describeFit, fitMetadata, personalizeOnePage } from "../onePage";
 import { saveResumeArtifacts } from "../compile";
 import { getProfile, resumeFilename } from "../profile";
 import { getLlmConfig } from "../credentials";
@@ -54,18 +54,10 @@ async function generate(userId: string, app: Owned) {
       where: { id: app.id },
       data: { status: "personalized", personalizeStatus: null },
     });
-    const detail = result.clippedFromMultiPage
-      ? `Re-personalized at tightness ${result.tightness}, overflowed to ${result.pages} pages, clipped to first page.`
-      : `Re-personalized at tightness ${result.tightness} (${result.attempts} pass${result.attempts === 1 ? "" : "es"}, fits one page).`;
-    await prisma.event.create({ data: { applicationId: app.id, type: "personalized", detail } });
-    await completeApplicationTask(app.id, "GENERATE_RESUME", {
-      metadata: {
-        tightness: result.tightness,
-        attempts: result.attempts,
-        pages: result.pages,
-        clippedFromMultiPage: result.clippedFromMultiPage,
-      },
+    await prisma.event.create({
+      data: { applicationId: app.id, type: "personalized", detail: `Re-personalized: ${describeFit(result)}.` },
     });
+    await completeApplicationTask(app.id, "GENERATE_RESUME", { metadata: fitMetadata(result) });
     return updated;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

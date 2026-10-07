@@ -11,6 +11,9 @@ export interface EducationInfo {
   school: string;
   cgpa?: string;
   grad?: string;
+  start?: string;
+  degreeLevel?: string; // "Bachelor of Technology (BTech)"
+  discipline?: string;
 }
 
 export interface ExperienceEntry {

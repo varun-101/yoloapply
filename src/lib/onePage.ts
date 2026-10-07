@@ -1,14 +1,15 @@
-import { personalizeResume, loadPersonalizeContext } from "./personalize";
-import { buildLatexResume, Tightness } from "./latex";
-import { compileLatex, countPdfPages, clipToFirstPage } from "./compile";
+import { tailorResume, loadPersonalizeContext } from "./personalize";
+import { fitOnePage } from "./resumeFit";
+import { compileLatex } from "./compile";
+import type { ResumeLayout } from "./resumeTemplate";
 
 export interface OnePageResult {
   tex: string;
   pdf: Buffer;
-  tightness: Tightness;
-  attempts: number;
-  pages: number;
-  clippedFromMultiPage: boolean;
+  layout: ResumeLayout;
+  projectCount: number;
+  compiles: number;
+  bottomGapPct: number;
 }
 
 interface Input {
@@ -17,39 +18,38 @@ interface Input {
   role: string;
 }
 
-// Personalize + compile, retrying with progressively tighter constraints until
-// the rendered PDF is exactly one page. If even the tightest pass still overflows,
-// clip to the first page as a last-resort safety net.
+// One tailoring call on the user's master resume, then a measured fit: the
+// project count, type scale and spacing are chosen from the compiled PDF so
+// the page is one full page. Overflow is never clipped; if nothing fits,
+// fitOnePage throws and the run is recorded as failed.
 export async function personalizeOnePage(userId: string, input: Input): Promise<OnePageResult> {
   const ctx = await loadPersonalizeContext(userId);
-  const tightnesses: Tightness[] = [0, 1, 2];
-  let lastTex = "";
-  let lastPdf: Buffer = Buffer.alloc(0);
-  let lastPages = 0;
-  let lastTightness: Tightness = 0;
-
-  for (const t of tightnesses) {
-    const draft = await personalizeResume(ctx, { ...input, tightness: t });
-    const tex = buildLatexResume(ctx.profile, draft, t);
-    const pdf = await compileLatex(tex);
-    const pages = await countPdfPages(pdf);
-    lastTex = tex;
-    lastPdf = pdf;
-    lastPages = pages;
-    lastTightness = t;
-    if (pages <= 1) {
-      return { tex, pdf, tightness: t, attempts: t + 1, pages, clippedFromMultiPage: false };
-    }
-  }
-
-  // Still too long — clip to first page so we never return a 2-page resume.
-  const clipped = await clipToFirstPage(lastPdf);
+  const doc = await tailorResume(ctx, input);
+  const fit = await fitOnePage(doc, compileLatex);
   return {
-    tex: lastTex,
-    pdf: clipped,
-    tightness: lastTightness,
-    attempts: tightnesses.length,
-    pages: lastPages,
-    clippedFromMultiPage: true,
+    tex: fit.tex,
+    pdf: fit.pdf,
+    layout: fit.layout,
+    projectCount: fit.projectCount,
+    compiles: fit.compiles,
+    bottomGapPct: Math.round(fit.measure.bottomGap * 1000) / 10,
+  };
+}
+
+export function describeFit(result: OnePageResult): string {
+  return (
+    `${result.projectCount} project${result.projectCount === 1 ? "" : "s"}, ` +
+    `scale ${result.layout.scale.toFixed(2)}, ${result.bottomGapPct}% blank below the last line ` +
+    `(${result.compiles} compile${result.compiles === 1 ? "" : "s"})`
+  );
+}
+
+export function fitMetadata(result: OnePageResult) {
+  return {
+    projectCount: result.projectCount,
+    scale: result.layout.scale,
+    extraGapPt: result.layout.extraGapPt,
+    bottomGapPct: result.bottomGapPct,
+    compiles: result.compiles,
   };
 }
