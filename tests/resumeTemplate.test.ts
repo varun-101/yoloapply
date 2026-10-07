@@ -92,6 +92,8 @@ describe("text the resume font can show", () => {
 
   it("refuses scripts the font lacks instead of failing the compile or dropping them", () => {
     expect(unsupportedChars("नमस्ते 你好")).not.toEqual([]);
+    // Latin Extended-A letters missing from one of the two engines.
+    expect(unsupportedChars("Ħal ŧest ſ")).toEqual(["Ħ", "ŧ", "ſ"]);
     const bad = { ...masterResume(profile, []), summary: "Speaks 中文 fluently." };
     expect(() => buildResumeTex(bad)).toThrow(ResumeTextError);
     expect(() => buildResumeTex(bad)).toThrow(/中/);

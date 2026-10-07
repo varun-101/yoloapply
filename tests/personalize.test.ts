@@ -94,6 +94,22 @@ describe("grounding checks", () => {
     expect(unknownTerms("Shipped semantic NLP search for SaaS tenants.", g.corpus)).toEqual(["NLP", "SaaS"]);
   });
 
+  it("checks a sentence's first word too, unless it is an ordinary opener", () => {
+    expect(unknownTerms("Kubernetes powers TypeScript APIs for 100 users.", g.corpus)).toEqual(["Kubernetes"]);
+    expect(unknownTerms("Engineer with expertise: Kubernetes and TypeScript APIs.", g.corpus)).toEqual(["Kubernetes"]);
+    expect(unknownTerms("Shipped TypeScript APIs. Built BM25 search, e.g. reranking.", g.corpus)).toEqual([]);
+    expect(unknownTerms("Improved Node.js's throughput and TypeScript’s typing.", g.corpus)).toEqual([]);
+  });
+
+  it("compares figures with their units and their counts", () => {
+    const orig = "Served 100 users and 10 teams with $100 budgets.";
+    // The real corpus always contains the original bullet.
+    const g2 = { ...g, corpus: `${g.corpus}\n${orig.toLowerCase()} 100% regions` };
+    expect(acceptRewrite(orig, "Served 100 users and 10 teams with $100 budgets daily.", g2)).toBe(true);
+    expect(acceptRewrite(orig, "Served 100 users and 10 teams across 100 regions with $100 budgets.", g2)).toBe(false);
+    expect(acceptRewrite(orig, "Served 100 users and 10 teams with 100% budgets.", g2)).toBe(false);
+  });
+
   it("treats digits inside names as part of the name, not as figures", () => {
     expect(numbersIn("Used OAuth2 and S3 for 100 users across 4-8 regions.")).toEqual(["100", "4", "8"]);
   });
@@ -123,6 +139,24 @@ describe("skills the resume may list", () => {
       { label: "Backend", value: "Node.js, PostgreSQL" },
       { label: "Languages", value: "JavaScript" },
       { label: "DevOps", value: "CI/CD" },
+    ]);
+  });
+
+  it("folds groups whose heading claims something ungrounded into Technologies", () => {
+    const groups = filterSkills(
+      [
+        { label: "AI/ML & NLP", items: ["BM25"] },
+        { label: "Security & SaaS", items: ["Node.js"] },
+        { label: "Cloud & DevOps", items: ["CI/CD"] },
+        { label: "Chrome Extension APIs", items: ["Node.js", "TypeScript"] },
+      ],
+      g.corpus,
+      master.skills
+    );
+    expect(groups).toEqual([
+      { label: "Technologies", value: "BM25, Node.js" },
+      { label: "Cloud & DevOps", value: "CI/CD" },
+      { label: "Chrome Extension APIs", value: "Node.js, TypeScript" },
     ]);
   });
 });

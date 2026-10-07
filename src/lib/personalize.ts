@@ -75,21 +75,48 @@ function rewriteBullets(original: string[], proposed: unknown, g: Grounding): st
   return original.map((orig, i) => (next[i] && acceptRewrite(orig, next[i], g) ? next[i] : orig));
 }
 
+// Category words a skills heading may use without the candidate having
+// written them. Anything else in a heading ("NLP", "SaaS", "Security") is a
+// claim, so it must come from the candidate's own material.
+const LABEL_WORDS = new Set(
+  (
+    "and & other core programming languages language frameworks framework libraries backend frontend " +
+    "full-stack fullstack data databases database cloud devops ai ml ai/ml tools tooling software " +
+    "platforms infrastructure web apps applications mobile testing automation apis integrations " +
+    "extensions browser developer retrieval search storage messaging technologies"
+  ).split(" ")
+);
+
+function labelGrounded(label: string, corpusLower: string): boolean {
+  return label
+    .split(/[\s,]+/)
+    .map((w) => w.replace(/^[^\p{L}\p{N}&]+|[^\p{L}\p{N}&]+$/gu, ""))
+    .filter(Boolean)
+    .every((w) => LABEL_WORDS.has(w.toLowerCase()) || w.split("/").every((p) => LABEL_WORDS.has(p.toLowerCase())) || mentions(corpusLower, w));
+}
+
 // Every skill the resume lists must already appear in the candidate's own
-// material as a whole term; the model may group and order, not add.
+// material as a whole term; the model may group and order, not add. A group
+// whose heading makes an ungrounded claim is folded into "Technologies".
 export function filterSkills(proposed: unknown, corpusLower: string, fallback: ResumeSkillGroup[]): ResumeSkillGroup[] {
-  const groups: ResumeSkillGroup[] = [];
+  const groups = new Map<string, string[]>();
   for (const g of list(proposed).slice(0, MAX_SKILL_GROUPS)) {
     if (!g || typeof g !== "object") continue;
-    const label = str((g as Record<string, unknown>).label);
+    let label = str((g as Record<string, unknown>).label);
     const raw = (g as Record<string, unknown>).items ?? (g as Record<string, unknown>).value;
     const items = (Array.isArray(raw) ? raw.map(str) : str(raw).split(","))
       .map((s) => s.trim())
       .filter((s) => s && mentions(corpusLower, s));
-    const unique = items.filter((s, i) => items.findIndex((t) => t.toLowerCase() === s.toLowerCase()) === i);
-    if (label && unique.length) groups.push({ label, value: unique.join(", ") });
+    if (!label || !items.length) continue;
+    if (!labelGrounded(label, corpusLower)) label = "Technologies";
+    const bucket = groups.get(label) ?? [];
+    for (const item of items) {
+      if (!bucket.some((b) => b.toLowerCase() === item.toLowerCase())) bucket.push(item);
+    }
+    groups.set(label, bucket);
   }
-  return groups.length ? groups : fallback;
+  const out = [...groups].map(([label, items]) => ({ label, value: items.join(", ") }));
+  return out.length ? out : fallback;
 }
 
 export function buildGrounding(profile: CandidateProfile, projectBank: ProjectBankItem[]): Grounding {
@@ -193,7 +220,8 @@ discarded automatically and the original wording is used instead.
 
 4) skills: 4-6 labelled groups (e.g. "Languages", "Backend", "AI/ML", "Cloud & DevOps"), JD-relevant
    groups and items first. Use ONLY technologies that appear in the master resume above; never add
-   one because the job asks for it.
+   one because the job asks for it. Group labels are plain categories ("Languages", "Backend",
+   "Cloud & DevOps", "AI/ML"), never a keyword from the job description.
 
 # OUTPUT FORMAT (strict JSON)
 {

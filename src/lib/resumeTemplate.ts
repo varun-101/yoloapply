@@ -179,10 +179,12 @@ export function normalizeText(s: string): string {
   return SYMBOLS.reduce((acc, [re, to]) => acc.replace(re, to), s);
 }
 
-// What T1-encoded TeX Gyre Heros renders on both pdflatex and Tectonic:
-// ASCII, Latin-1, Latin Extended-A, plus the dashes and curly quotes escTex
-// rewrites. pdflatex aborts on anything else and Tectonic silently drops it.
-const UNSUPPORTED = /[^ -~ -ſ–—‘’“”]/gu;
+// What TeX Gyre Heros renders on both pdflatex (T1) and Tectonic (OpenType),
+// measured on both engines: ASCII, Latin-1 and Latin Extended-A except the
+// nine letters listed second, plus the dashes and quotes escTex rewrites.
+// pdflatex aborts on anything else and Tectonic silently drops it.
+const UNSUPPORTED =
+  /[^ -~ -ſ–—‘’“”]|[ĦħĸĿŀŉŦŧſ]/gu;
 
 export function unsupportedChars(s: string): string[] {
   return [...new Set(normalizeText(s).match(UNSUPPORTED) ?? [])];
@@ -246,7 +248,7 @@ export function buildResumeTex(doc: ResumeDocument, layout: ResumeLayout = REFER
 % "Ł", so XeTeX loads the OpenType files instead.
 \ifdefined\XeTeXrevision
 \usepackage{fontspec}
-\setsansfont{texgyreheros}[Extension=.otf,UprightFont=*-regular,BoldFont=*-bold,ItalicFont=*-italic,BoldItalicFont=*-bolditalic]
+\setsansfont{texgyreheros}[Ligatures={TeX,NoCommon},Extension=.otf,UprightFont=*-regular,BoldFont=*-bold,ItalicFont=*-italic,BoldItalicFont=*-bolditalic]
 \else
 \usepackage[T1]{fontenc}
 \usepackage{tgheros}

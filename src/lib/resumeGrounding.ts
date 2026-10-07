@@ -22,29 +22,64 @@ export function mentions(haystackLower: string, term: string): boolean {
   return new RegExp(`(?<![\\p{L}\\p{N}+#])${escapeRegExp(t)}(?![\\p{L}\\p{N}+#])`, "u").test(haystackLower);
 }
 
-// Standalone figures only: the 2 in "OAuth2" or the 3 in "S3" is part of a
+// Standalone figures with their units ("$100", "100%", "10x", "5k+"), one
+// entry per occurrence. The 2 in "OAuth2" or the 3 in "S3" is part of a
 // name, which unknownTerms checks instead.
 export function numbersIn(text: string): string[] {
-  return (text.match(/(?<![\p{L}\d.,])\d+(?:[.,]\d+)*(?![\p{L}\d])/gu) ?? []).map((n) => n.replace(/,/g, ""));
+  const re = /(?<![\p{L}\d.,])(?:[$€£]|Rs\.?\s?|INR\s?)?\d+(?:[.,]\d+)*(?:%|[xkKM]\b|\+)?(?![\p{L}\d])/gu;
+  return (text.match(re) ?? []).map((n) => n.replace(/,/g, "").replace(/\s/g, "")).sort();
 }
 
 function words(s: string): number {
   return s.trim().split(/\s+/).filter(Boolean).length;
 }
 
+// Ordinary words a resume sentence opens with. A sentence's first word is
+// capitalised whatever it is, so it is checked like any other term unless it
+// is one of these: "Kubernetes powers ..." must not slip through as an opener.
+const OPENERS = new Set(
+  (
+    "a an the also and plus as at in on for from with using through currently recently " +
+    "built builds building developed develops designed designs implemented implements integrated " +
+    "shipped ships led leads owned owns automated automates created creates engineered delivered " +
+    "launched improved reduced increased optimized migrated deployed maintained managed coordinated " +
+    "collaborated drove established streamlined wrote added connected handled modeled published ran " +
+    "scaled refactored tested debugged analyzed researched prototyped configured enabled extended " +
+    "introduced produced supported used worked contributed partnered mentored focuses brings combines " +
+    "applies specializes works enjoys software backend frontend full-stack fullstack engineer developer " +
+    "early-career junior graduate computer student experienced hands-on product-minded"
+  ).split(" ")
+);
+
+// A plain capitalised word that is a listed opener or reads as a verb or
+// adverb ("Served", "Building", "Recently"). Names ("Kubernetes", "Google")
+// and anything with inner capitals, digits or dots ("TypeScript", "EC2")
+// still go through the corpus check.
+function isOrdinaryOpener(t: string): boolean {
+  const lower = t.toLowerCase();
+  if (OPENERS.has(lower)) return true;
+  return /^\p{Lu}\p{Ll}+$/u.test(t) && /(?:ed|ing|ly)$/.test(lower);
+}
+
+function clean(raw: string): string {
+  return raw
+    .replace(/^[^\p{L}\p{N}$€£]+/u, "")
+    .replace(/[^\p{L}\p{N}+#%]+$/u, "")
+    .replace(/['’]s$/u, "");
+}
+
 // Terms the text relies on that need checking: anything capitalised or
-// numeric that is not just the first word of a sentence (proper nouns,
-// technologies, acronyms, figures).
+// numeric (proper nouns, technologies, acronyms, figures), including a
+// sentence's first word unless it is an ordinary opener.
 function significantTerms(text: string): string[] {
   const out: string[] = [];
-  for (const sentence of text.split(/(?<=[.!?:;])\s+/)) {
-    sentence
-      .split(/\s+/)
-      .slice(1)
-      .forEach((raw) => {
-        const t = raw.replace(/^[^\p{L}\p{N}]+/u, "").replace(/[^\p{L}\p{N}+#]+$/u, "");
-        if (t && /[\p{Lu}\p{N}]/u.test(t)) out.push(t);
-      });
+  for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+    sentence.split(/\s+/).forEach((raw, i) => {
+      const t = clean(raw);
+      if (!t || !/[\p{Lu}\p{N}]/u.test(t)) return;
+      if (i === 0 && isOrdinaryOpener(t)) return;
+      out.push(t);
+    });
   }
   return out;
 }
@@ -55,8 +90,9 @@ function significantTerms(text: string): string[] {
 export function unknownTerms(text: string, corpusLower: string): string[] {
   return significantTerms(text).filter((t) => {
     if (mentions(corpusLower, t)) return false;
-    const parts = t.split(/[/-]/).filter((p) => /[\p{Lu}\p{N}]/u.test(p));
-    return parts.length === 0 || t.split(/[/-]/).length < 2 || parts.some((p) => !mentions(corpusLower, p));
+    const pieces = t.split(/[/-]/);
+    const parts = pieces.filter((p) => /[\p{Lu}\p{N}]/u.test(p));
+    return pieces.length < 2 || parts.length === 0 || parts.some((p) => !mentions(corpusLower, p));
   });
 }
 
@@ -72,9 +108,8 @@ export function acceptRewrite(original: string, rewrite: string, g: Grounding): 
   if (m > Math.max(n * MAX_LENGTH_RATIO, n + 4)) return false;
   if (m < Math.max(3, Math.ceil(n * MIN_LENGTH_RATIO))) return false;
 
-  const before = numbersIn(original);
-  const after = numbersIn(rewrite);
-  if (before.some((x) => !after.includes(x)) || after.some((x) => !before.includes(x))) return false;
+  // Same figures, same units, same number of times each.
+  if (numbersIn(original).join(" ") !== numbersIn(rewrite).join(" ")) return false;
 
   const originalLower = original.toLowerCase();
   const rewriteLower = rewrite.toLowerCase();
