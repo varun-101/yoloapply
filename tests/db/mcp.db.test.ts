@@ -492,6 +492,13 @@ describe("mail", () => {
     ]);
     expect(results.filter((r) => r.kind === "code")).toHaveLength(1);
   });
+  it("withholds the text of any message that mentions a code", async () => {
+    const letters = graphMessage("AAMkLETTERS00001", "Security code for your application to Umbrella", "Copy and paste this code into the security code field: kQbRtZxW", 2);
+    const res = await searchApplicationEmails(userA, { includeUnmatched: false, limit: 10, categories: ["verification_code", "other"] }, fakeGraph([letters]));
+    expect(JSON.stringify(res)).not.toContain("kQbRtZxW");
+    const read = await getApplicationEmail(userA, { messageId: letters.id }, fakeGraph([letters]));
+    expect(JSON.stringify(read)).not.toContain("kQbRtZxW");
+  });
   it("redacts codes from search results", async () => {
     const code = graphMessage("AAMkCODE00000001", "482913 is your Umbrella code", "Your security code is 482913 for Umbrella.", 2);
     const res = await searchApplicationEmails(userA, { includeUnmatched: false, limit: 10, categories: ["verification_code"] }, fakeGraph([code]));

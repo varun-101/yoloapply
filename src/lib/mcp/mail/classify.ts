@@ -81,7 +81,7 @@ const DUPLICATE = /\b(already (applied|submitted|received)|duplicate application
 // Definite rejection wording. "Unfortunately" alone is weak: receipts often
 // say "unfortunately we can't reply to everyone".
 const REJECTION =
-  /\b(not (be )?(moving|move|proceeding|progressing) forward|(will|would) not be (moving|progressing|proceeding)|won'?t be (moving|progressing|proceeding)|not (be )?proceeding|different direction|decided not to|(move|moving) forward with (other|another)|go(ing)? with (another|other) candidate|pursue other|other candidates|position has been filled|no longer (being )?considered|regret to inform|not (been )?selected)\b/i;
+  /\b(not (be )?(moving|move|proceeding|progressing) forward|(will|would) not be (moving|progressing|proceeding)|won'?t be (moving|progressing|proceeding)|not (be )?proceeding|different direction|decided not to|(move|moving) forward with (other|another|(the )?candidates)|candidates whose|go(ing)? with (another|other) candidate|pursue other|other candidates|position has been filled|no longer (being )?considered|regret to inform|not (been )?selected)\b/i;
 const WEAK_REJECTION = /\bunfortunately\b/i;
 const RECEIPT =
   /\b(thank(s| you) for (applying|your application|submitting your application)|application (has been |was )?(received|submitted)|received your application|application confirmation|successfully (applied|submitted)|confirm(ing)? (receipt|that we received)|thank(s| you) for your interest in [^.\n]{0,80}\b(role|position|opening|job)\b)\b/i;

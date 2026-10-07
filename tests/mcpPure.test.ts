@@ -450,3 +450,29 @@ describe("review round 2 regressions", () => {
     expect(c({ subject: "Your application to Acme", preview, fromAddress: gh })).toBe("application_receipt");
   });
 });
+
+describe("review round 3 regressions", () => {
+  const gh = "no-reply@us.greenhouse-mail.io";
+  it("extracts letters-only, spaced and loosely worded codes", () => {
+    expect(extractCodes("Copy and paste this code into the security code field on your application: kQbRtZxW")).toContain("kQbRtZxW");
+    expect(extractCodes("Enter the following code to continue your application: 482913")).toContain("482913");
+    expect(extractCodes("Your 6-digit code is 482913. It expires in 10 minutes.")).toContain("482913");
+    expect(extractCodes("To finish, type 482913 on the application page. This code expires in 10 minutes.")).toContain("482913");
+    expect(extractCodes("Your PIN is 4821")).toContain("4821");
+    expect(extractCodes("Your verification code is 4 8 2 9 1 3")).toContain("4 8 2 9 1 3");
+    expect(extractCodes("Please use the code below to continue")).toEqual([]);
+  });
+  it("classifies those as verification mail", async () => {
+    const { classifyMessage: c } = await import("@/lib/mcp/mail/classify");
+    expect(c({ subject: "Security code for your application to Acme", preview: "Copy and paste this code into the security code field on your application: kQbRtZxW", fromAddress: gh })).toBe(
+      "verification_code"
+    );
+    expect(c({ subject: "Acme", preview: "Your PIN is 4821", fromAddress: gh })).toBe("verification_code");
+  });
+  it("reads 'moving forward with candidates' as a rejection", async () => {
+    const { classifyMessage: c } = await import("@/lib/mcp/mail/classify");
+    expect(
+      c({ subject: "Acme", preview: "Thank you for applying. After careful review, we have decided to move forward with candidates whose experience more closely matches.", fromAddress: gh })
+    ).toBe("rejection");
+  });
+});

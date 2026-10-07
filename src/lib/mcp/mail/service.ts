@@ -13,7 +13,7 @@ import {
   type MailCategory,
   type MailMessage,
 } from "./classify";
-import { DEFAULT_OTP_MAX_AGE_MS, redactCodes, selectOtp, VERIFICATION_WORDING } from "./otp";
+import { CODE_WORDING, DEFAULT_OTP_MAX_AGE_MS, redactCodes, selectOtp } from "./otp";
 
 // Read-only access to the candidate's connected Outlook mailbox, narrowed to
 // application mail. Uses the existing Microsoft OAuth connection (encrypted
@@ -227,7 +227,7 @@ export async function searchApplicationEmails(userId: string, input: SearchMailI
     // "other" mail must come from an ATS AND name a tracked employer.
     if (!matches.length && (!input.includeUnmatched || category === "other")) continue;
     if (category === "other" && !isAtsSender(m.fromAddress)) continue;
-    const hideCodes = category === "verification_code" || VERIFICATION_WORDING.test(`${m.subject}\n${m.preview}`);
+    const hideCodes = category === "verification_code" || CODE_WORDING.test(`${m.subject}\n${m.preview}`);
     results.push({
       messageId: m.id,
       internetMessageId: m.internetMessageId,
@@ -235,7 +235,9 @@ export async function searchApplicationEmails(userId: string, input: SearchMailI
       from: m.fromAddress,
       fromName: m.fromName,
       subject: (hideCodes ? redactCodes(m.subject) : m.subject).slice(0, 300),
-      preview: (hideCodes ? redactCodes(m.preview) : m.preview).slice(0, 300),
+      // Code-bearing previews are withheld outright: pattern redaction can't
+      // be trusted to catch every code format.
+      preview: hideCodes ? "[withheld: mentions a code; use get_application_otp]" : m.preview.slice(0, 300),
       category,
       addressedToCandidate: m.toAddresses.some((a) => a.toLowerCase() === conn.mailbox?.toLowerCase()),
       matchConfidence: matchConfidence(matches),
@@ -318,8 +320,10 @@ export async function getApplicationEmail(
   }
   // Codes are only released through get_application_otp, which binds them to
   // one live application challenge.
-  const hideCodes = category === "verification_code" || VERIFICATION_WORDING.test(`${m.subject}\n${text}`);
-  const redacted = hideCodes ? redactCodes(text) : text;
+  const hideCodes = category === "verification_code" || CODE_WORDING.test(`${m.subject}\n${text}`);
+  const redacted = hideCodes
+    ? "[withheld: this message mentions a code. Codes are only released by get_application_otp for an active application.]"
+    : text;
   return {
     mailbox: conn.mailbox,
     messageId: m.id,
@@ -400,7 +404,7 @@ export async function getApplicationOtp(
   const { messages: raw } = await listMessages(graph, { since, until: new Date(now.getTime() + 60_000), term: null, maxMessages: 50 });
   // Previews are short; codes sometimes sit lower in the body. Read the full
   // text of at most five plausible candidates.
-  const plausible = raw.filter((g) => /\b(code|otp|passcode|verif|one[- ]time)/i.test(`${g.subject ?? ""} ${g.bodyPreview ?? ""}`));
+  const plausible = raw.filter((g) => /\b(code|otp|passcode|pin|verif|one[- ]time)/i.test(`${g.subject ?? ""} ${g.bodyPreview ?? ""}`));
   const messages: MailMessage[] = [];
   for (const g of plausible.slice(0, 5)) {
     const { g: full, text } = await fetchMessage(graph, g.id);

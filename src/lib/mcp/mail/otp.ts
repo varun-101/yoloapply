@@ -11,40 +11,52 @@ export const DEFAULT_OTP_MAX_AGE_MS = 15 * 60 * 1000;
 export const OTP_ASSUMED_VALIDITY_MS = 10 * 60 * 1000;
 const CLOCK_SKEW_MS = 60 * 1000;
 
-// A code token: 4-12 letters/digits with at least one digit, or digits split
-// into two groups ("482 913", "482-913").
-const TOKEN = String.raw`(\d{3,4}[ -]\d{3,4}|[A-Za-z0-9]{4,12})`;
+// A code token: two digit groups ("482 913"), spaced single digits
+// ("4 8 2 9 1 3"), or 4-12 letters/digits. Letters-only tokens are accepted
+// only in labelled positions and only if they don't look like a word.
+const TOKEN = String.raw`(\d(?:[ -]\d){3,7}|\d{3,4}[ -]\d{3,4}|[A-Za-z0-9]{4,12})`;
 const CODE_PATTERNS = [
-  new RegExp(String.raw`\b(?:verification|security|confirmation|one[- ]time|access|login|sign[- ]?in|passcode|otp)\s*(?:code|pin|password|passcode)?\s*(?:is|:|-)?\s*[:\-]?\s*` + TOKEN + String.raw`\b`, "gi"),
-  new RegExp(String.raw`\b(?:your|the|this)\s+code\s*(?:is|:)\s*` + TOKEN + String.raw`\b`, "gi"),
-  new RegExp(String.raw`\bcode\b[^\n]{0,80}?[:\-]\s*` + TOKEN + String.raw`\b`, "gi"),
-  new RegExp(String.raw`\b(?:use|enter)\s+(?:code\s+)?` + TOKEN + String.raw`\b`, "gi"),
+  new RegExp(String.raw`\b(?:verification|security|confirmation|one[- ]time|access|login|sign[- ]?in|passcode|otp|pin)\s*(?:code|pin|password|passcode)?\s*(?:is|:|-)?\s*[:\-]?\s*` + TOKEN + String.raw`\b`, "gi"),
+  new RegExp(String.raw`\b(?:code|pin|passcode)\s+is\s*:?\s*` + TOKEN + String.raw`\b`, "gi"),
+  new RegExp(String.raw`\b(?:code|pin|passcode|otp)\b[^\n]{0,80}?[:\-]\s*` + TOKEN + String.raw`\b`, "gi"),
+  new RegExp(String.raw`\b(?:use|enter|type)\s+(?:the\s+)?(?:code\s+)?` + TOKEN + String.raw`\b`, "gi"),
   // "code for your application to Acme: 123456" (digits only, close by).
-  /\b(?:code|otp|passcode)\b[^0-9\n]{0,60}?\b(\d{3,4}[ -]\d{3,4}|\d{4,8})\b/gi,
+  /\b(?:code|otp|passcode|pin)\b[^0-9\n]{0,60}?\b(\d(?:[ -]\d){3,7}|\d{3,4}[ -]\d{3,4}|\d{4,8})\b/gi,
 ];
 
 // Words that look like codes after "code is" but are not.
-const NOT_CODES = new Set(["below", "above", "valid", "expire", "expires", "please", "here", "this", "that"]);
+const NOT_CODES = new Set([
+  "below", "above", "valid", "expire", "expires", "please", "here", "this", "that", "your", "code", "field",
+  "continue", "confirm", "verify", "application", "minutes", "following", "within", "only", "once", "again",
+]);
 
-/** Verification wording, case-insensitive. Mail with it is treated as code-bearing. */
-export const VERIFICATION_WORDING =
-  /\b(verification code|verify your (email|identity)|security code|one[- ]time (pass(word|code)?|code|pin)|otp|confirmation code|access code|login code|sign[- ]?in code|your code|passcode|enter (this|the) code|use (this|the) code)\b/i;
+/** Mentions a code at all. Read tools withhold the text of any such message (fail closed). */
+export const CODE_WORDING = /\b(codes?|pin|otp|passcodes?|one[- ]time|verif(y|ication|ied))\b/i;
+/** Back-compat name used by search/read callers. */
+export const VERIFICATION_WORDING = CODE_WORDING;
+
+function plausibleCode(token: string): boolean {
+  if (NOT_CODES.has(token.toLowerCase())) return false;
+  if (/\d/.test(token)) return true;
+  // Letters only: accept generated-looking tokens (mixed case inside, or all
+  // caps), never ordinary words.
+  return token.length >= 6 && (/[a-z].*[A-Z]|[A-Z].*[a-z].*[A-Z]/.test(token.slice(1)) || /^[A-Z]{6,12}$/.test(token));
+}
 
 export function extractCodes(text: string): string[] {
   const codes = new Set<string>();
   for (const pattern of CODE_PATTERNS) {
     for (const m of text.matchAll(new RegExp(pattern.source, pattern.flags))) {
-      const code = m[1];
-      if (!/[0-9]/.test(code) || NOT_CODES.has(code.toLowerCase())) continue;
-      codes.add(code);
+      if (plausibleCode(m[1])) codes.add(m[1]);
     }
   }
   // A code on its own line right after a sentence that mentions a code.
   const lines = text.split(/\r?\n/).map((l) => l.trim());
   for (let i = 1; i < lines.length; i++) {
     if (
-      /^(\d{3,4}[ -]\d{3,4}|(?=[A-Za-z]*\d)[A-Za-z0-9]{4,12})$/.test(lines[i]) &&
-      /\b(code|otp|passcode|verify|verification)\b/i.test(lines.slice(Math.max(0, i - 3), i).join(" "))
+      /^(\d(?:[ -]\d){3,7}|\d{3,4}[ -]\d{3,4}|[A-Za-z0-9]{4,12})$/.test(lines[i]) &&
+      plausibleCode(lines[i]) &&
+      /\b(code|otp|passcode|pin|verify|verification)\b/i.test(lines.slice(Math.max(0, i - 3), i).join(" "))
     ) {
       codes.add(lines[i]);
     }
@@ -52,9 +64,9 @@ export function extractCodes(text: string): string[] {
   return [...codes];
 }
 
-/** Code-bearing mail: verification wording plus something that looks like a code. */
+/** Code-bearing mail: code wording plus an extractable code. */
 export function looksCodeBearing(text: string): boolean {
-  return VERIFICATION_WORDING.test(text) && (extractCodes(text).length > 0 || /\b\d{4,8}\b/.test(text));
+  return CODE_WORDING.test(text) && extractCodes(text).length > 0;
 }
 
 /**
@@ -66,6 +78,7 @@ export function redactCodes(text: string): string {
   let out = text;
   for (const code of extractCodes(text)) out = out.split(code).join("[code redacted]");
   return out
+    .replace(/\b\d(?:[ -]\d){3,7}\b/g, "[code redacted]")
     .replace(/\b\d{3,4}[ -]\d{3,4}\b/g, "[code redacted]")
     .replace(/\b\d{4,12}\b/g, "[code redacted]")
     .replace(/\b(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{4,12}\b/g, "[code redacted]");
