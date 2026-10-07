@@ -35,7 +35,6 @@ export const MAX_SCALE = 1.25;
 const MAX_EXTRA_GAP_PT = 8;
 const LETTER_HEIGHT_PT = 792;
 const SCALE_SEARCH_STEPS = 3;
-const MAX_PARTIAL_TRIES = 3;
 
 export class ResumeFitError extends Error {}
 
@@ -142,12 +141,17 @@ export async function fitOnePage(
     // the gap it would otherwise leave.
     const next = doc.projects[lo];
     if (next && best.layout.scale === 1 && best.measure.bottomGap > GOOD_GAP) {
-      const fewest = Math.max(1, next.bullets.length - MAX_PARTIAL_TRIES);
-      for (let bullets = next.bullets.length - 1; bullets >= fewest; bullets--) {
-        const r = await render(withProjects(doc, lo + 1, bullets), base);
+      // Largest bullet prefix of the next project that still fits.
+      let few = 0; // fits (it is `best`)
+      let many = next.bullets.length; // known to overflow
+      while (many - few > 1) {
+        const mid = Math.floor((few + many) / 2);
+        const r = await render(withProjects(doc, lo + 1, mid), base);
         if (r.fits) {
+          few = mid;
           best = r;
-          break;
+        } else {
+          many = mid;
         }
       }
     }

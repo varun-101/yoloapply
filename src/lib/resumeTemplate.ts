@@ -149,20 +149,76 @@ export function masterResume(profile: CandidateProfile, projectBank: ProjectBank
   };
 }
 
+// Symbols people paste into profiles that the resume font has no glyph for,
+// mapped to plain equivalents. Emoji are decoration and are dropped.
+const SYMBOLS: [RegExp, string][] = [
+  [/[→⇒➜⟶]/g, "->"],
+  [/[←⇐⟵]/g, "<-"],
+  [/[↔⇔]/g, "<->"],
+  [/…/g, "..."],
+  [/[•▪◦‣⁃]/g, "-"],
+  [/[‐‑‒−]/g, "-"],
+  [/≥/g, ">="],
+  [/≤/g, "<="],
+  [/≈/g, "~"],
+  [/′/g, "'"],
+  [/″/g, '"'],
+  // TeX quote ligatures render as curly quotes on both engines; escTex would
+  // otherwise flatten them to '"', which XeTeX prints as a closing quote.
+  [/[“„]/g, "``"],
+  [/”/g, "''"],
+  [/[‘‚]/g, "`"],
+  [/™/g, "TM"],
+  [/₹\s*/g, "Rs. "],
+  [/[  -  \t\r\n]/g, " "],
+  [/[​-‍⁠﻿️]/g, ""],
+  [/[\p{Extended_Pictographic}☀-➿]/gu, ""],
+];
+
+export function normalizeText(s: string): string {
+  return SYMBOLS.reduce((acc, [re, to]) => acc.replace(re, to), s);
+}
+
+// What T1-encoded TeX Gyre Heros renders on both pdflatex and Tectonic:
+// ASCII, Latin-1, Latin Extended-A, plus the dashes and curly quotes escTex
+// rewrites. pdflatex aborts on anything else and Tectonic silently drops it.
+const UNSUPPORTED = /[^ -~ -ſ–—‘’“”]/gu;
+
+export function unsupportedChars(s: string): string[] {
+  return [...new Set(normalizeText(s).match(UNSUPPORTED) ?? [])];
+}
+
+export class ResumeTextError extends Error {}
+
 // Escaped text with the f-ligatures broken up. Tectonic maps ligature glyphs
 // to U+FB01/U+FB02 in the PDF text layer, so an ATS reading "workflows"
 // would get "work" + U+FB02 + "ows"; "f{}l" typesets as two glyphs on every engine.
 function tx(s: string): string {
-  return escTex(s).replace(/f(?=[fil])/g, "f{}");
+  const text = normalizeText(s);
+  const bad = unsupportedChars(text);
+  if (bad.length) {
+    const excerpt = text.length > 60 ? `${text.slice(0, 57)}...` : text;
+    throw new ResumeTextError(
+      `The resume font cannot show ${bad.map((c) => `"${c}"`).join(", ")} (in "${excerpt}"). ` +
+        "Replace those characters in Settings → Profile or Projects."
+    );
+  }
+  return escTex(text).replace(/f(?=[fil])/g, "f{}");
 }
 
-// URLs go inside \href{...}; only characters that break the argument need care.
+// URLs go inside \href{...}. Characters TeX would rewrite are percent-encoded
+// first, so the PDF link target is the real URL; then # % & are escaped.
 function escUrl(url: string): string {
-  return url.replace(/\\/g, "").replace(/([#%&{}])/g, "\\$1").replace(/[\s~^]/g, (c) => encodeURI(c));
+  return url
+    .trim()
+    .replace(/[\\{}^~\s"<>`|]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0"))
+    .replace(/([#%&])/g, "\\$1");
 }
 
+// \uline (ulem) breaks across lines; \underline boxes the whole label, so a
+// long linked title would run off the page instead of wrapping.
 function link(label: string, url?: string): string {
-  return url ? `\\href{${escUrl(url)}}{\\underline{${tx(label)}}}` : tx(label);
+  return url ? `\\href{${escUrl(url)}}{\\uline{${tx(label)}}}` : tx(label);
 }
 
 function bulletList(items: string[]): string {
@@ -185,9 +241,18 @@ export function buildResumeTex(doc: ResumeDocument, layout: ResumeLayout = REFER
 %--------------------------------------------------------------------
 \documentclass[letterpaper]{article}
 \usepackage[left=36bp,right=36bp,top=${bp(18)},bottom=${bp(24)}]{geometry}
+% The same TeX Gyre Heros on both engines. Under XeTeX (Tectonic) the T1
+% Type 1 font only maps Latin-1 correctly and silently drops letters such as
+% "Ł", so XeTeX loads the OpenType files instead.
+\ifdefined\XeTeXrevision
+\usepackage{fontspec}
+\setsansfont{texgyreheros}[Extension=.otf,UprightFont=*-regular,BoldFont=*-bold,ItalicFont=*-italic,BoldItalicFont=*-bolditalic]
+\else
 \usepackage[T1]{fontenc}
 \usepackage{tgheros}
+\fi
 \renewcommand{\familydefault}{\sfdefault}
+\usepackage[normalem]{ulem}
 \usepackage[hidelinks]{hyperref}
 \usepackage{enumitem}
 % pdfTeX needs an explicit Unicode map; XeTeX/Tectonic already uses Unicode.

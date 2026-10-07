@@ -3,7 +3,14 @@ import { getProjectBank, ProjectBankItem } from "./projectBank";
 import { getProfile, CandidateProfile } from "./profile";
 import { getLlmConfig } from "./credentials";
 import { systemFor } from "./prompts";
-import { defaultSkills, masterResume, type ResumeDocument, type ResumeSkillGroup } from "./resumeTemplate";
+import { acceptRewrite, mentions, unknownTerms, type Grounding } from "./resumeGrounding";
+import {
+  defaultSkills,
+  masterResume,
+  unsupportedChars,
+  type ResumeDocument,
+  type ResumeSkillGroup,
+} from "./resumeTemplate";
 
 // Tailoring edits the words of the user's master resume (resumeTemplate.ts)
 // toward one job description. It does not decide how much fits on the page:
@@ -41,9 +48,6 @@ export interface TailoringOutput {
   projects?: unknown;
 }
 
-// A rewritten bullet may drift this far from the original's word count before
-// it is discarded; the page fill depends on lengths staying put.
-const MAX_LENGTH_RATIO = 1.35;
 const MAX_SUMMARY_WORDS = 55;
 const MAX_SKILL_GROUPS = 7;
 
@@ -51,8 +55,11 @@ function words(s: string): number {
   return s.trim().split(/\s+/).filter(Boolean).length;
 }
 
+// Model text, cleaned; text the PDF font cannot show is treated as missing.
 function str(v: unknown): string {
-  return typeof v === "string" ? deAi(v.replace(/\s+/g, " ").trim()) : "";
+  if (typeof v !== "string") return "";
+  const s = deAi(v.replace(/\s+/g, " ").trim());
+  return unsupportedChars(s).length ? "" : s;
 }
 
 function list(v: unknown): unknown[] {
@@ -60,26 +67,17 @@ function list(v: unknown): unknown[] {
 }
 
 // Same bullets in the same order, each replaced by its rewrite only when the
-// rewrite is present and about the same length. A wrong count means the model
-// merged or split bullets, so the originals are kept whole.
-function rewriteBullets(original: string[], proposed: unknown): string[] {
+// rewrite passes the grounding checks. A wrong count means the model merged
+// or split bullets, so the originals are kept whole.
+function rewriteBullets(original: string[], proposed: unknown, g: Grounding): string[] {
   const next = list(proposed).map(str);
   if (next.length !== original.length) return original;
-  return original.map((orig, i) => {
-    const b = next[i];
-    if (!b) return orig;
-    return words(b) <= Math.max(words(orig) * MAX_LENGTH_RATIO, words(orig) + 4) ? b : orig;
-  });
+  return original.map((orig, i) => (next[i] && acceptRewrite(orig, next[i], g) ? next[i] : orig));
 }
 
-function norm(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9+#]/g, "");
-}
-
-// Every skill the resume lists must already appear somewhere in the
-// candidate's own material; the model may group and order, not add.
-export function filterSkills(proposed: unknown, corpus: string, fallback: ResumeSkillGroup[]): ResumeSkillGroup[] {
-  const haystack = norm(corpus);
+// Every skill the resume lists must already appear in the candidate's own
+// material as a whole term; the model may group and order, not add.
+export function filterSkills(proposed: unknown, corpusLower: string, fallback: ResumeSkillGroup[]): ResumeSkillGroup[] {
   const groups: ResumeSkillGroup[] = [];
   for (const g of list(proposed).slice(0, MAX_SKILL_GROUPS)) {
     if (!g || typeof g !== "object") continue;
@@ -87,35 +85,39 @@ export function filterSkills(proposed: unknown, corpus: string, fallback: Resume
     const raw = (g as Record<string, unknown>).items ?? (g as Record<string, unknown>).value;
     const items = (Array.isArray(raw) ? raw.map(str) : str(raw).split(","))
       .map((s) => s.trim())
-      .filter((s) => s && norm(s) && haystack.includes(norm(s)));
+      .filter((s) => s && mentions(corpusLower, s));
     const unique = items.filter((s, i) => items.findIndex((t) => t.toLowerCase() === s.toLowerCase()) === i);
     if (label && unique.length) groups.push({ label, value: unique.join(", ") });
   }
   return groups.length ? groups : fallback;
 }
 
-export function candidateCorpus(profile: CandidateProfile, projectBank: ProjectBankItem[]): string {
-  return [
-    ...profile.experience.flatMap((x) => [x.title, ...x.bullets]),
-    ...profile.extras.flatMap((x) => [x.title, x.summary ?? ""]),
-    ...projectBank.flatMap((p) => [p.oneLiner, p.problem, p.approach, p.outcome, ...p.techStack]),
+export function buildGrounding(profile: CandidateProfile, projectBank: ProjectBankItem[]): Grounding {
+  const edu = profile.education;
+  const corpus = [
+    profile.name,
+    profile.city,
+    profile.country,
+    edu ? [edu.school, edu.degree, edu.degreeLevel ?? "", edu.discipline ?? ""].join(" ") : "",
+    ...profile.experience.flatMap((x) => [x.company, x.title, x.location ?? "", ...x.bullets]),
+    ...profile.extras.flatMap((x) => [x.title, x.org, x.summary ?? ""]),
+    ...projectBank.flatMap((p) => [p.title, p.subtitle, p.tagline, p.oneLiner, p.problem, p.approach, p.outcome, ...p.techStack]),
   ].join("\n");
+  const techTerms = [...new Set(projectBank.flatMap((p) => p.techStack.map((t) => t.trim())).filter(Boolean))];
+  return { corpus: corpus.toLowerCase(), techTerms };
 }
 
 // Pure: merges the model's edits onto the master. Anything missing or
 // malformed falls back to the master's own wording, never to nothing.
-export function applyTailoring(
-  master: ResumeDocument,
-  out: TailoringOutput,
-  corpus: string
-): ResumeDocument {
+export function applyTailoring(master: ResumeDocument, out: TailoringOutput, g: Grounding): ResumeDocument {
   const summary = str(out.summary);
+  const summaryOk = !!summary && words(summary) <= MAX_SUMMARY_WORDS && unknownTerms(summary, g.corpus).length === 0;
 
   const experience = master.experience.map((x, i) => {
     const match = list(out.experience).find(
       (e) => e && typeof e === "object" && (e as Record<string, unknown>).index === i
     ) as Record<string, unknown> | undefined;
-    return { ...x, bullets: rewriteBullets(x.bullets, match?.bullets) };
+    return { ...x, bullets: rewriteBullets(x.bullets, match?.bullets, g) };
   });
 
   // Ranked order from the model, then whatever it left out in master order.
@@ -127,15 +129,15 @@ export function applyTailoring(
     const p = typeof slug === "string" ? bySlug.get(slug) : undefined;
     if (!p) continue;
     bySlug.delete(p.slug);
-    ranked.push({ ...p, bullets: rewriteBullets(p.bullets, (entry as Record<string, unknown>).bullets) });
+    ranked.push({ ...p, bullets: rewriteBullets(p.bullets, (entry as Record<string, unknown>).bullets, g) });
   }
   ranked.push(...bySlug.values());
 
   return {
     ...master,
-    summary: summary && words(summary) <= MAX_SUMMARY_WORDS ? summary : master.summary,
+    summary: summaryOk ? summary : master.summary,
     experience,
-    skills: filterSkills(out.skills, corpus, master.skills),
+    skills: filterSkills(out.skills, g.corpus, master.skills),
     projects: ranked,
   };
 }
@@ -184,6 +186,11 @@ master's text, so lengths must stay put.
    about the same length, JD vocabulary.
 3) summary: 1-2 sentences, at most 45 words, aimed at this role and backed by the proof points
    above. Plain language, no buzzwords, no first-person "I am a passionate...".
+Never introduce a term the master resume does not already contain: no acronym, technology, domain
+label or buzzword taken from the job description alone (if the master never says "NLP", "SaaS" or
+"Gen AI", neither may you). Rewrites that add one, drop a technology, or change a number are
+discarded automatically and the original wording is used instead.
+
 4) skills: 4-6 labelled groups (e.g. "Languages", "Backend", "AI/ML", "Cloud & DevOps"), JD-relevant
    groups and items first. Use ONLY technologies that appear in the master resume above; never add
    one because the job asks for it.
@@ -204,5 +211,5 @@ master's text, so lengths must stay put.
     temperature: 0.3,
   });
 
-  return applyTailoring(master, parsed ?? {}, candidateCorpus(profile, projectBank));
+  return applyTailoring(master, parsed ?? {}, buildGrounding(profile, projectBank));
 }

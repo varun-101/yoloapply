@@ -74,6 +74,18 @@ describe("fitting a resume to one full page", () => {
     await expect(fitOnePage(doc(3), compile, fakeMeasure(1200, 50))).rejects.toBeInstanceOf(ResumeFitError);
   });
 
+  it("searches the whole bullet range of the partial project", async () => {
+    // 4 projects of 2 bullets fit (200 + 100 + 400 = 700); the next has 16
+    // bullets of 50 and only its first 6 fit.
+    const d = doc(4, 2);
+    d.projects.push({ slug: "big", title: "BIG", bullets: Array.from({ length: 16 }, (_, j) => `big.${j}`) });
+    const r = await fitOnePage(d, compile, fakeMeasure(200, 50));
+    expect(r.projectCount).toBe(5);
+    expect(r.tex).toContain("big.5");
+    expect(r.tex).not.toContain("big.6");
+    expect(r.measure.bottomGap).toBeLessThanOrEqual(GOOD_GAP);
+  });
+
   it("stays within a small number of compiles", async () => {
     const r = await fitOnePage(doc(16), compile, fakeMeasure(200, 50));
     expect(r.compiles).toBeLessThanOrEqual(9);
