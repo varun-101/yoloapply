@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { personalizeOnePage } from "@/lib/onePage";
+import { describeFit, fitMetadata, personalizeOnePage } from "@/lib/onePage";
 import { saveResumeArtifacts } from "@/lib/compile";
 import { requireUser, apiError } from "@/lib/auth";
 import { getProfile, resumeFilename } from "@/lib/profile";
@@ -72,20 +72,10 @@ export async function POST(req: NextRequest) {
           where: { id: app.id },
           data: { status: "personalized" },
         });
-        const detail = result.clippedFromMultiPage
-          ? `Personalized at tightness ${result.tightness} — overflowed to ${result.pages} pages, clipped to first page.`
-          : `Personalized at tightness ${result.tightness} (${result.attempts} pass${result.attempts === 1 ? "" : "es"}, fits one page).`;
         await prisma.event.create({
-          data: { applicationId: app.id, type: "personalized", detail },
+          data: { applicationId: app.id, type: "personalized", detail: `Personalized: ${describeFit(result)}.` },
         });
-        await completeApplicationTask(app.id, "GENERATE_RESUME", {
-          metadata: {
-            tightness: result.tightness,
-            attempts: result.attempts,
-            pages: result.pages,
-            clippedFromMultiPage: result.clippedFromMultiPage,
-          },
-        });
+        await completeApplicationTask(app.id, "GENERATE_RESUME", { metadata: fitMetadata(result) });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         await failApplicationTask(app.id, "GENERATE_RESUME", e);

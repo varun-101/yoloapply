@@ -104,7 +104,13 @@ The four writing system prompts — resume personalization, cold email, cover le
 
 ### Application flow
 
-Lead promote (or manual entry) → `Application` row → `personalize.ts` (DeepSeek picks 3-4 of the user's projects, tailors bullets per JD; `experienceBullets` is indexed per experience entry) → `latex.ts` (typed LaTeX builder, ATS-friendly) → `compile.ts` (remote texlive.net / latex.ytotech.com, local `tectonic`/`pdflatex` if installed) → PDF into the bucket via `saveResumeArtifacts`. `onePage.ts` enforces one-page output. Status changes and emails append `Event` rows.
+Lead promote (or manual entry) → `Application` row → `onePage.ts` `personalizeOnePage` → PDF into the bucket via `saveResumeArtifacts`. The resume is the user's **master resume** with its words edited per JD, not a fresh draft:
+
+- `resumeTemplate.ts` builds the master from the user's data (`masterResume`: full profile + EVERY project in the bank; a project's bullets are its `oneLiner` then each line of `approach`) and renders it in the design of Varun's hand-made reference resume (compact TeX Gyre Heros sans, 7.5pt body at `scale` 1, ruled caps section headings). It must compile on **pdflatex and Tectonic alike** (production usually has no local TeX and falls back to remote pdflatex), so no `fontspec`/system fonts. Text goes through `tx()`, which breaks `f`-ligatures because Tectonic writes them into the text layer as U+FB01/U+FB02 and ATS parsers then misread words.
+- `personalize.ts` `tailorResume` is ONE DeepSeek call that returns every project ranked by relevance plus same-count, about-same-length bullet rewrites, a summary, and skill groups. `applyTailoring` (pure) merges it onto the master defensively: unknown slugs dropped, unranked projects appended, a bullet list with the wrong count or a rewrite past `MAX_LENGTH_RATIO` keeps the original wording, and `filterSkills` drops any skill not already present in the candidate's own material.
+- `resumeFit.ts` `fitOnePage` compiles and **measures the real PDF** (`unpdf` text positions → page count + blank fraction below the last line) and only varies layout: the largest prefix of ranked projects that fits (binary search, then a partial next project), a larger `scale` when everything fits with room to spare, then extra section spacing for what is left. Target: ≤ `GOOD_GAP` (6%) blank, the reference sits at ~3.5%. It never clips a multi-page PDF; if even one project at `MIN_SCALE` overflows it throws `ResumeFitError`. This replaced an LLM-retry loop that re-asked for shorter content on overflow and accepted the first one-page result, which left 20-30% of the page empty.
+
+Status changes and emails append `Event` rows.
 
 ### Outbound email: two senders (`src/lib/mailer.ts`, `src/lib/microsoft/`)
 
