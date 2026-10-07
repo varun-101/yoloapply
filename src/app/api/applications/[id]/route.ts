@@ -36,7 +36,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const user = await requireUser(req);
     const existing = await prisma.application.findFirst({
       where: { id: params.id, userId: user.id },
-      select: { id: true },
+      select: { id: true, appliedAt: true },
     });
     if (!existing) return NextResponse.json({ error: "not found" }, { status: 404 });
 
@@ -45,7 +45,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const data: Record<string, unknown> = {};
     for (const k of allowed) if (k in body) data[k] = body[k];
 
-    if (data.status === "applied" && !("appliedAt" in body)) data.appliedAt = new Date();
+    // appliedAt is explicit when supplied (a historical application recorded
+    // late keeps its real date). Otherwise moving to "applied" stamps now only
+    // if no date exists yet; re-saving an applied row must not move it.
+    if ("appliedAt" in body) {
+      const parsed = parseAppliedAt(body.appliedAt);
+      if (parsed === "invalid") {
+        return NextResponse.json({ error: "appliedAt must be an ISO date that is not in the future, or null." }, { status: 400 });
+      }
+      data.appliedAt = parsed;
+    } else if (data.status === "applied" && !existing.appliedAt) {
+      data.appliedAt = new Date();
+    }
 
     const app = await prisma.application.update({ where: { id: existing.id }, data });
     if ("status" in data) {
@@ -60,6 +71,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   } catch (e) {
     return apiError(e);
   }
+}
+
+function parseAppliedAt(value: unknown): Date | null | "invalid" {
+  if (value === null) return null;
+  if (typeof value !== "string") return "invalid";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()) || date.getTime() > Date.now() + 2 * 60 * 1000) return "invalid";
+  return date;
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {

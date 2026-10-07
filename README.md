@@ -87,3 +87,7 @@ Credentials, not in `.env`.
 - `extension/` — standalone Chrome extension (vanilla JS).
 
 See `CLAUDE.md` for the full architecture notes.
+
+## MCP server for agents
+
+Agents (Claude Code, Codex, T3 Code) can search jobs, read the candidate profile and saved answers, prepare and download resumes, track applications and read application email (Outlook, read-only) through `POST /api/mcp`, authenticated with the personal token from Settings -> Credentials. Employer forms are filled and submitted in a browser the candidate watches; the MCP server itself never submits or sends email. Setup and tool contract: [docs/MCP.md](docs/MCP.md).

@@ -1,6 +1,7 @@
 import { prisma } from "../db";
 import { encryptSecret, decryptSecret } from "../crypto";
 import { ApiUserError } from "../auth";
+import { randomUUID } from "crypto";
 
 // OAuth against the Microsoft identity platform, so a user can connect their
 // Outlook / Microsoft 365 mailbox by logging in instead of pasting an app
@@ -149,9 +150,21 @@ async function fetchProfile(accessToken: string): Promise<GraphMe> {
   return (await res.json()) as GraphMe;
 }
 
-async function persistTokens(userId: string, tokens: TokenResponse): Promise<void> {
-  await prisma.userCredential.update({
-    where: { userId },
+// Guarded write: only the lease holder that spent `previousRefreshEnc` may
+// store its successor, so a reconnect or a competing process can't be undone.
+async function persistTokens(
+  userId: string,
+  tokens: TokenResponse,
+  leaseOwner: string,
+  previousRefreshEnc: string
+): Promise<void> {
+  const saved = await prisma.userCredential.updateMany({
+    where: {
+      userId,
+      msRefreshLeaseOwner: leaseOwner,
+      msRefreshTokenEnc: previousRefreshEnc,
+      msRefreshLeaseExpiresAt: { gt: new Date() },
+    },
     data: {
       msAccessTokenEnc: encryptSecret(tokens.access_token),
       msTokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
@@ -161,6 +174,9 @@ async function persistTokens(userId: string, tokens: TokenResponse): Promise<voi
       ...(tokens.scope ? { msScopes: tokens.scope } : {}),
     },
   });
+  if (saved.count !== 1) {
+    throw new ApiUserError("Outlook connection changed during refresh. Try again.", 409, "microsoft_refresh_stale");
+  }
 }
 
 // Completes the connect flow: code → tokens → whose mailbox is this → persist.
@@ -215,37 +231,46 @@ export async function disconnectMicrosoft(userId: string): Promise<void> {
       msDisplayName: null,
       msConnectedAt: null,
       msScopes: null,
+      msRefreshLeaseOwner: null,
+      msRefreshLeaseExpiresAt: null,
       // Don't strand the user on a provider that can no longer send.
       emailProvider: "smtp",
     },
   });
 }
 
-// Per-user in-flight refresh, mirroring the runUserScan lock in
-// src/lib/discovery/pipeline.ts. This one is not just an optimisation: the
-// refresh token ROTATES, so two concurrent sends both spending the same one
-// would leave the loser holding a dead token and silently break the
-// connection. Same single-instance caveat as every other globalThis lock here.
+// Two layers, because the refresh token ROTATES and two parties spending the
+// same one would leave the loser holding a dead token:
+//   - the promise map coalesces concurrent callers inside this process
+//     (mirrors runUserScan in src/lib/discovery/pipeline.ts);
+//   - the msRefreshLease* columns exclude other server processes (the MCP
+//     endpoint and the dashboard can run as separate local servers on one DB).
 type MicrosoftGlobal = { __msTokenRefresh?: Map<string, Promise<string>> };
 const g = globalThis as unknown as MicrosoftGlobal;
 function refreshLocks(): Map<string, Promise<string>> {
   return (g.__msTokenRefresh ??= new Map());
 }
 
-async function refreshAccessToken(userId: string, refreshToken: string): Promise<string> {
+const LEASE_TTL_MS = 45_000;
+const LEASE_WAIT_MS = 25_000;
+
+async function refreshAccessToken(userId: string, refreshTokenEnc: string, leaseOwner: string): Promise<string> {
   let tokens: TokenResponse;
   try {
     tokens = await tokenRequest({
       grant_type: "refresh_token",
-      refresh_token: refreshToken,
+      refresh_token: decryptSecret(refreshTokenEnc),
       scope: MS_SCOPES,
     });
   } catch (e) {
     // invalid_grant = revoked, expired, password changed, or consent pulled.
-    // Nothing to retry: drop the connection so the UI asks for a reconnect
-    // instead of failing on every send from here on.
+    // Nothing to retry: drop the tokens so the UI asks for a reconnect. Only
+    // the token this lease spent is cleared, so a concurrent reconnect survives.
     if (e instanceof MicrosoftAuthError && e.oauthCode === "invalid_grant") {
-      await disconnectMicrosoft(userId);
+      await prisma.userCredential.updateMany({
+        where: { userId, msRefreshLeaseOwner: leaseOwner, msRefreshTokenEnc: refreshTokenEnc },
+        data: { msAccessTokenEnc: null, msRefreshTokenEnc: null, msTokenExpiresAt: null },
+      });
       throw new ApiUserError(
         "Your Outlook connection expired — reconnect it in Settings → Credentials.",
         400,
@@ -254,8 +279,44 @@ async function refreshAccessToken(userId: string, refreshToken: string): Promise
     }
     throw e;
   }
-  await persistTokens(userId, tokens);
+  await persistTokens(userId, tokens, leaseOwner, refreshTokenEnc);
   return tokens.access_token;
+}
+
+async function refreshWithDatabaseLease(userId: string): Promise<string> {
+  const owner = randomUUID();
+  const deadline = Date.now() + LEASE_WAIT_MS;
+  while (Date.now() < deadline) {
+    const now = new Date();
+    const locked = await prisma.userCredential.updateMany({
+      where: { userId, OR: [{ msRefreshLeaseExpiresAt: null }, { msRefreshLeaseExpiresAt: { lte: now } }] },
+      data: { msRefreshLeaseOwner: owner, msRefreshLeaseExpiresAt: new Date(Date.now() + LEASE_TTL_MS) },
+    });
+    if (locked.count === 1) {
+      try {
+        // Re-read under the lease: another process may have refreshed already.
+        const latest = await prisma.userCredential.findUnique({ where: { userId } });
+        if (!latest?.msRefreshTokenEnc) {
+          throw new ApiUserError("Connect your Outlook account first (Settings → Credentials).", 400, "no_microsoft");
+        }
+        if (
+          latest.msAccessTokenEnc &&
+          latest.msTokenExpiresAt &&
+          latest.msTokenExpiresAt.getTime() - Date.now() > REFRESH_SKEW_MS
+        ) {
+          return decryptSecret(latest.msAccessTokenEnc);
+        }
+        return await refreshAccessToken(userId, latest.msRefreshTokenEnc, owner);
+      } finally {
+        await prisma.userCredential.updateMany({
+          where: { userId, msRefreshLeaseOwner: owner },
+          data: { msRefreshLeaseOwner: null, msRefreshLeaseExpiresAt: null },
+        });
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new ApiUserError("Outlook token refresh is busy. Try again shortly.", 503, "microsoft_refresh_busy");
 }
 
 export async function getMicrosoftAccessToken(userId: string): Promise<string> {
@@ -280,7 +341,7 @@ export async function getMicrosoftAccessToken(userId: string): Promise<string> {
   const inflight = locks.get(userId);
   if (inflight) return inflight;
 
-  const pending = refreshAccessToken(userId, decryptSecret(cred.msRefreshTokenEnc)).finally(() => {
+  const pending = refreshWithDatabaseLease(userId).finally(() => {
     locks.delete(userId);
   });
   locks.set(userId, pending);

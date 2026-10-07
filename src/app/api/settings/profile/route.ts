@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireUser, apiError } from "@/lib/auth";
+import { mergeFormAnswers } from "@/lib/profile";
 
 // The signed-in user's candidate profile (identity + education/experience/
 // extras), the data every prompt and LaTeX template draws from.
@@ -52,6 +53,10 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "name and contact email are required" }, { status: 400 });
     }
 
+    const previous = await prisma.userProfile.findUnique({
+      where: { userId: user.id },
+      select: { applicationAnswers: true },
+    });
     const str = (v: string | undefined) => v?.trim() || null;
     const data = {
       name,
@@ -73,13 +78,9 @@ export async function PUT(req: NextRequest) {
         ? body.experience
         : []) as Prisma.InputJsonValue,
       extras: (Array.isArray(body.extras) ? body.extras : []) as Prisma.InputJsonValue,
-      applicationAnswers: {
-        workAuthorization: body.applicationAnswers?.workAuthorization?.trim() || undefined,
-        sponsorship: body.applicationAnswers?.sponsorship?.trim() || undefined,
-        noticePeriod: body.applicationAnswers?.noticePeriod?.trim() || undefined,
-        willingToRelocate: body.applicationAnswers?.willingToRelocate?.trim() || undefined,
-        currentLocation: body.applicationAnswers?.currentLocation?.trim() || undefined,
-      } as Prisma.InputJsonValue,
+      // The form edits five keys; every other saved answer (consent choices,
+      // per-country work facts, declaration defaults) must survive a save.
+      applicationAnswers: mergeFormAnswers(previous?.applicationAnswers, body.applicationAnswers),
       followUpDelayDays: Math.min(30, Math.max(1, Math.round(Number(body.followUpDelayDays) || 5))),
       recruiterLocation: str(body.recruiterLocation),
     };

@@ -14,6 +14,8 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: ["tests/**/*.test.ts"],
+    // DB integration tests need the disposable database: npm run test:db.
+    exclude: ["tests/db/**", "node_modules/**"],
     setupFiles: ["tests/setup.ts"],
   },
 });
