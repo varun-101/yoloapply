@@ -145,7 +145,11 @@ ${experienceBlock}
 \usepackage[english]{babel}
 \usepackage{tabularx}
 \usepackage{xcolor}
+% pdfTeX needs an explicit Unicode map; XeTeX/Tectonic already uses Unicode.
+\ifdefined\pdfgentounicode
 \input{glyphtounicode}
+\pdfgentounicode=1
+\fi
 
 \pagestyle{fancy}
 \fancyhf{}
@@ -166,7 +170,6 @@ ${experienceBlock}
 
 \titleformat{\section}{\vspace{${sectionSkip}}\scshape\raggedright\large}{}{0em}{}[\color{black}\titlerule\vspace{${itemSkip}}]
 
-\pdfgentounicode=1
 
 % A rupee macro (not all engines have one; this stays ASCII-safe)
 \newcommand{\rupee}{\textbf{Rs.}}
@@ -183,9 +186,14 @@ ${experienceBlock}
 
 \newcommand{\resumeProjectHeading}[2]{
     \item
-    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
-      \small#1 & #2 \\
-    \end{tabular*}\vspace{-7pt}
+    \begingroup
+    % Reserve the actual link width; wrap saved heading text within the list.
+    \sbox0{#2}
+    \edef\projectHeadingWidth{\the\dimexpr\linewidth-\wd0-1em\relax}
+    \begin{tabular}[t]{@{}p{\projectHeadingWidth}@{\hspace{1em}}r@{}}
+      \raggedright\small#1 & #2 \\
+    \end{tabular}\vspace{-7pt}
+    \endgroup
 }
 
 \renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
