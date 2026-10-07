@@ -1,4 +1,5 @@
 import { prisma } from "./db";
+import type { Prisma } from "@prisma/client";
 import { ApiUserError } from "./auth";
 
 // Per-user candidate profile, loaded from the UserProfile table. The shape
@@ -117,4 +118,25 @@ export function resumeFilename(
   const parts = [clean(profile.name), clean(suffix)];
   if (company) parts.push(clean(company));
   return parts.filter(Boolean).join("_") + ".pdf";
+}
+
+const FORM_ANSWER_KEYS = ["workAuthorization", "sponsorship", "noticePeriod", "willingToRelocate", "currentLocation"] as const;
+
+// Settings -> Profile edits five answer keys. Every other saved answer (consent
+// choices, per-country work facts, declaration defaults) must survive a save,
+// and a key absent from the request keeps its saved value.
+export function mergeFormAnswers(
+  previous: unknown,
+  incoming: Partial<Record<(typeof FORM_ANSWER_KEYS)[number], unknown>> | undefined
+): Prisma.InputJsonValue {
+  const merged: Record<string, unknown> =
+    previous && typeof previous === "object" && !Array.isArray(previous) ? { ...(previous as Record<string, unknown>) } : {};
+  for (const key of FORM_ANSWER_KEYS) {
+    const value = incoming?.[key];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) merged[key] = trimmed;
+    else delete merged[key];
+  }
+  return merged as Prisma.InputJsonValue;
 }

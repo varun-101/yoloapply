@@ -147,6 +147,10 @@ model UserCredential {
   msDisplayName     String?
   msConnectedAt     DateTime?
   msScopes          String? // granted scopes, so a future scope change can spot stale grants
+  // Cross-process refresh lease. The refresh token rotates, so exactly one
+  // process may spend it at a time (src/lib/microsoft/oauth.ts).
+  msRefreshLeaseOwner     String?
+  msRefreshLeaseExpiresAt DateTime?
 
   extensionTokenHash   String?  @unique // sha256 hex of the full "yolo_…" token
   extensionTokenPrefix String? // first chars, display only

@@ -18,6 +18,7 @@ npm run db:deploy    # prisma migrate deploy (production)
 npm run db:studio    # browse the Postgres DB
 npx tsc --noEmit     # typecheck
 npm test             # vitest — unit tests over the pure helpers in src/lib/** (no DB, no network)
+npm run test:db      # MCP/tracking integration tests on the DISPOSABLE loopback DB yoloapply_mcp_test (scripts/mcp-test-db.mjs refuses anything else)
 npx tsx scripts/seed-ats-companies.ts   # re-seed ATS watchlist from data/ats-companies/probe-results.json
 npx tsx scripts/probe-ats-companies.ts  # re-probe all ~10k boards in the dataset (~5 min), then re-seed
 npx tsx scripts/generate-icons.ts       # re-render every PWA/home-screen icon from its one vector source
@@ -34,6 +35,7 @@ npx tsx scripts/probe-sources.ts        # health-check every discovery source in
 - **No fabricated resume facts.** Personalization/cold-email/answer prompts may only draw on the user's `UserProfile` (`src/lib/profile.ts`) and their `Project` rows (`src/lib/projectBank.ts`) — both edited under Settings.
 - **Outbound email** always leaves from the user's OWN mailbox — `sendEmail(userId, …)` in `src/lib/mailer.ts`. Never a shared sender. Two providers, chosen explicitly in Settings (see "Outbound email" below): their SMTP creds (Gmail app password, encrypted at rest) or an Outlook account connected over OAuth.
 - **Never auto-submit applications or mass-email.** The extension prefills and stops for human review; cold emails are drafted one at a time.
+- **MCP is read-mostly and never submits** (`docs/MCP.md`). `/api/mcp` has no tool that submits to an employer, sends/deletes/marks-read email, deletes data or changes credentials. Agents fill and submit employer forms in a browser the candidate watches, then record outcomes; a submission counts as applied only with observed evidence (`src/lib/application-agent/submission.ts`). At the candidate's explicit request, `get_application_otp` may release ONE application verification code under the binding rules in `src/lib/mcp/mail/otp.ts`; no other stored secret or OAuth token is exposed.
 - **Tenant isolation**: every API route starts with `requireUser(req)` (`src/lib/auth.ts`); detail routes use `findFirst({ where: { id, userId } })` → 404, so cross-tenant ids look nonexistent. Server pages use `requirePageUser()`.
 - **Secrets at rest**: DeepSeek keys and SMTP passwords are AES-256-GCM encrypted (`src/lib/crypto.ts`, `APP_ENCRYPTION_KEY`); extension tokens are stored as sha256 hashes. Never return a stored secret to the client (the credentials GET returns presence + last-4 only).
 
@@ -153,6 +155,10 @@ Entry points: nav **Operate → Interview prep**; **"Practice interview"** butto
 ### Chrome extension (`extension/`)
 
 Standalone vanilla-JS extension; nothing is bundled into or imported from the Next.js app. It authenticates with a per-user `yolo_…` token generated under Settings → Credentials (hash stored in `UserCredential`), sent as `Authorization: Bearer`. Backend support (CORS, token auth, `/api/extract-job/dom`, `/api/autofill-map`, `/api/answer-question`, `/api/profile`) lives in the main app.
+
+### MCP server (`src/lib/mcp/`, `/api/mcp`)
+
+Stateless Streamable HTTP via `@modelcontextprotocol/sdk` 1.x: each POST authenticates the `yolo_` personal token (`requireUser`), builds a fresh server bound to that user and answers JSON. 20 tools across candidate context (`context.ts`, `declarations.ts`, `formReview.ts`, `playbook.ts`), discovery (`jobSearch.ts`: keyset cursor over `COALESCE(postedAt, createdAt)` with no row cap, because the Discover route's `postedAt desc` + `take: 500` returns only undated Instahyre rows, NULLs sorting first), tracking (`applications.ts`, `application-agent/submission.ts`), resumes (`application-agent/resumeJob.ts`, shared with the personalize route) and read-only Outlook mail (`mail/`). Timestamps in raw SQL go through `utc()` because the columns are `timestamp without time zone`. Full contract and client setup: `docs/MCP.md`. Outlook refresh tokens are coordinated across processes by the `msRefreshLease*` DB lease in `microsoft/oauth.ts`, so the MCP server and the dashboard can run as separate local servers on one database.
 
 ### Schema-change gotcha (recurring trap)
 
