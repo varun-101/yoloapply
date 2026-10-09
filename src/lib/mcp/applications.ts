@@ -62,7 +62,7 @@ type EditableField = "company" | "role" | "location" | "jdUrl" | "applyUrl";
 export async function updateApplicationDraft(
   userId: string,
   applicationId: string,
-  patch: Partial<Record<EditableField, string>> & { jobDescription?: string; reason: string }
+  patch: Partial<Record<EditableField, string>> & { jobDescription?: string; markClosed?: boolean; reason: string }
 ) {
   const app = await prisma.application.findFirst({
     where: { id: applicationId, userId },
@@ -87,8 +87,27 @@ export async function updateApplicationDraft(
       "application_not_editable"
     );
   }
+  if (patch.markClosed) {
+    // Closing hides the application from OTP attribution and active work, so
+    // it must never bury a submission that may have gone through.
+    const submitted = await prisma.event.findFirst({
+      where: { applicationId: app.id, type: { in: TRACKING_EVENTS } },
+      select: { type: true },
+    });
+    if (submitted) {
+      throw new ApiUserError(
+        "A submit was already clicked or confirmed for this application. Reconcile it (search_application_emails, the employer page) instead of closing it.",
+        409,
+        "submission_on_record"
+      );
+    }
+  }
   const data: Prisma.ApplicationUpdateInput = {};
   const changes: string[] = [];
+  if (patch.markClosed) {
+    data.status = "closed";
+    changes.push(`status: "${app.status}" -> "closed"`);
+  }
   for (const key of ["company", "role", "location", "jdUrl", "applyUrl"] as const) {
     const v = patch[key]?.trim();
     if (!v || v === app[key]) continue;
@@ -126,11 +145,14 @@ export async function updateApplicationDraft(
   if (jd && jd.length >= 50) await completeApplicationTask(app.id, "PARSE_JOB").catch(() => {});
   await recordApplicationEvent(
     app.id,
-    "note",
-    `Updated by agent (${patch.reason.slice(0, 200)}): ${changes.join("; ")}`.slice(0, 1000)
+    patch.markClosed ? "status_change" : "note",
+    patch.markClosed
+      ? `closed by agent: ${patch.reason.slice(0, 300)}`
+      : `Updated by agent (${patch.reason.slice(0, 200)}): ${changes.join("; ")}`.slice(0, 1000)
   );
   // The resume was tailored to the old title/description.
-  const resumeStale = app.files.length > 0 && (data.company !== undefined || data.role !== undefined || data.jdText !== undefined);
+  const resumeStale =
+    !patch.markClosed && app.files.length > 0 && (data.company !== undefined || data.role !== undefined || data.jdText !== undefined);
   return {
     applicationId: app.id,
     changed: true,

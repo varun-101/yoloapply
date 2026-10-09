@@ -1,4 +1,5 @@
 import { prisma } from "../db";
+import { htmlToText } from "../html";
 
 // Is a catalog posting still open? Answered from the ATS's own public job API
 // (Greenhouse, Lever, Ashby), never by scraping a careers page: those APIs
@@ -150,4 +151,46 @@ export function livenessChecker(budgetMs: number) {
     if (!posting) return result("unknown", "not_an_ats_posting");
     return checkAtsPosting(posting, { network: Date.now() - started <= budgetMs });
   };
+}
+
+export type AtsDescription = { status: "open"; text: string } | { status: "closed" } | { status: "unknown"; reason: string };
+
+function unescapeHtml(t: string): string {
+  return t.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+}
+
+/**
+ * The posting's description straight from the ATS's public API: exact text,
+ * no page scrape, no LLM. Also answers liveness (a 404 / absent id = closed).
+ */
+export async function fetchAtsDescription(p: AtsPosting): Promise<AtsDescription> {
+  if (p.ats === "ashby") {
+    const res = await httpStatus(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(p.slug)}`);
+    const jobs = res?.status === 200 ? (res.body as { jobs?: { id?: string; descriptionPlain?: string; descriptionHtml?: string }[] } | null)?.jobs : null;
+    if (!Array.isArray(jobs)) return { status: "unknown", reason: "ashby_board_unavailable" };
+    const job = jobs.find((j) => String(j.id ?? "").toLowerCase() === p.id);
+    if (!job) return { status: "closed" };
+    const text = job.descriptionPlain?.trim() || (job.descriptionHtml ? htmlToText(job.descriptionHtml) : "");
+    return { status: "open", text };
+  }
+  if (p.ats === "greenhouse") {
+    const res = await httpStatus(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(p.slug)}/jobs/${p.id}`);
+    if (!res) return { status: "unknown", reason: "greenhouse_api_unreachable" };
+    if (res.status === 404) return { status: "closed" };
+    if (res.status !== 200) return { status: "unknown", reason: `greenhouse_api_${res.status}` };
+    const content = (res.body as { content?: string } | null)?.content ?? "";
+    return { status: "open", text: htmlToText(unescapeHtml(content)) };
+  }
+  const res = await httpStatus(`https://api${p.eu ? ".eu" : ""}.lever.co/v0/postings/${encodeURIComponent(p.slug)}/${p.id}`);
+  if (!res) return { status: "unknown", reason: "lever_api_unreachable" };
+  if (res.status === 404) return { status: "closed" };
+  if (res.status !== 200) return { status: "unknown", reason: `lever_api_${res.status}` };
+  const j = (res.body ?? {}) as { descriptionPlain?: string; lists?: { text?: string; content?: string }[]; additionalPlain?: string };
+  // Lever keeps requirements in `lists`, outside the description body.
+  const parts = [
+    j.descriptionPlain?.trim(),
+    ...(j.lists ?? []).map((l) => [l.text?.trim(), l.content ? htmlToText(l.content) : ""].filter(Boolean).join("\n")),
+    j.additionalPlain?.trim(),
+  ].filter(Boolean);
+  return { status: "open", text: parts.join("\n\n") };
 }

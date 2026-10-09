@@ -52,6 +52,10 @@ export function postingKey(raw: string | null | undefined): string | null {
     const m = /\/job-(\d+)/.exec(path);
     if (m) return `instahyre:${m[1]}`;
   }
+  // Eightfold-hosted careers sites (careers.<employer>.com/careers/job/<id>)
+  // add ?domain=&hl= per visit; the numeric id in the path is the posting.
+  const careersJob = /^\/careers\/job\/(\d{6,})\b/.exec(path);
+  if (careersJob) return `careers_job:${host}:${careersJob[1]}`;
   const canonical = canonicalizeJobUrl(raw);
   return canonical ? `url:${canonical}` : null;
 }
@@ -161,14 +165,19 @@ export interface JdExperience extends ExperienceRange {
 
 const YEARS = /\d+(?:\.\d+)?\s*(?:\+\s*)?(?:(?:-|–|to)\s*\d+(?:\.\d+)?\s*\+?\s*)?(?:years?|yrs?)\b/i;
 const EXPERIENCE_WORD = /\bexp(?:erience|\.)?\b|\bindustry\b|\bprofessional\b|\bhands[- ]on\b/i;
+// "3-6 years in backend engineering", "4+ years of full stack work": a
+// requirement even without the word "experience".
+const YEARS_IN_FIELD = /\d\s*\+?\s*(?:(?:-|–|to)\s*\d+\s*\+?\s*)?(?:years?|yrs?)\s+(?:in|of|building|working|writing|developing|as)\b/i;
 const NOT_REQUIRED = /\b(preferred|nice[- ]to[- ]have|bonus|a plus|is a plus|ideally|desired|desirable|advantage|optional)\b/i;
-const NOT_EXPERIENCE = /\b(years? old|years? of age|founded|in business|for over|since \d{4}|track record of \d+|warranty|anniversary)\b/i;
+const NOT_EXPERIENCE =
+  /\b(years? old|years? of age|founded|in business|for over|over \d+ years|since \d{4}|track record of \d+|warranty|anniversary|history|we have|we've|our (team|founders|leaders|engineers)|combined)\b/i;
 
 /**
  * The experience a description actually requires: listing fields ("0-1 yrs")
  * are often a board's band, not the employer's bar. Reads sentences that
  * state years of experience, skips preferred/bonus ones, and returns the
- * LOWEST stated requirement (several lines usually mean per-skill minimums).
+ * HIGHEST stated minimum: a candidate must meet every requirement, so "2+
+ * years as a software engineer" binds even next to "1+ years of Go".
  */
 export function jdExperienceRequirement(jdText: string | null | undefined): JdExperience | null {
   if (!jdText) return null;
@@ -176,11 +185,11 @@ export function jdExperienceRequirement(jdText: string | null | undefined): JdEx
   const sentences = jdText.split(/(?<=[.;!?])\s+|\n+/);
   for (const raw of sentences) {
     const s = raw.trim();
-    if (s.length > 400 || !YEARS.test(s) || !EXPERIENCE_WORD.test(s)) continue;
+    if (s.length > 400 || !YEARS.test(s) || !(EXPERIENCE_WORD.test(s) || YEARS_IN_FIELD.test(s))) continue;
     if (NOT_REQUIRED.test(s) || NOT_EXPERIENCE.test(s)) continue;
     const range = parseExperienceRange(s);
     if (!range || range.min > 20) continue;
-    if (!best || range.min < best.min) best = { ...range, quote: s.replace(/\s+/g, " ").slice(0, 200) };
+    if (!best || range.min > best.min) best = { ...range, quote: s.replace(/\s+/g, " ").slice(0, 200) };
   }
   return best;
 }

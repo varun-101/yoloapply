@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { companyAliases, jdExperienceRequirement, jobExperienceFits } from "@/lib/mcp/jobIdentity";
+import { companyAliases, jdExperienceRequirement, jobExperienceFits, postingKey } from "@/lib/mcp/jobIdentity";
+import { couldHaveRequestedCode } from "@/lib/mcp/mail/service";
 import { matchApplications, type MailMessage } from "@/lib/mcp/mail/classify";
 import { selectOtp } from "@/lib/mcp/mail/otp";
 import { reviewFields, samePlace } from "@/lib/mcp/formReview";
@@ -78,11 +79,40 @@ describe("experience from the full description", () => {
     expect(jdExperienceRequirement("Freshers welcome. 0-1 years of experience.")).toMatchObject({ min: 0, max: 1 });
     expect(jdExperienceRequirement("Great team, great perks.")).toBeNull();
   });
+  it("takes the highest stated minimum, since every requirement must be met (run 2: Abnormal)", () => {
+    const abnormal = "2+ years of experience as a software engineer with a strong foundation in coding.\n1+ years of hands-on experience in backend development using Python or Golang.";
+    expect(jdExperienceRequirement(abnormal)).toMatchObject({ min: 2 });
+    expect(jobExperienceFits(null, abnormal, 1)).toBe(false);
+  });
+  it("reads 'N years in <field>' without the word experience (run 2: Sarvam, rzr)", () => {
+    expect(jdExperienceRequirement("• 3–6 years in backend engineering with production systems in continuous operation")).toMatchObject({ min: 3, max: 6 });
+    expect(jdExperienceRequirement("We have worked with hundreds of advertisers over 14 years.")).toBeNull();
+    expect(jdExperienceRequirement("Our founders have 20 years of experience in ad tech. 1+ years of experience with React.")).toMatchObject({ min: 1 });
+  });
   it("lets the stricter of listing band and description decide", () => {
     expect(jobExperienceFits("0-1 years", jd, 1)).toBe(false); // NielsenIQ: listed 0, description 3-6
     expect(jobExperienceFits(null, jd, 3)).toBe(true);
     expect(jobExperienceFits(null, null, 1)).toBe(true);
     expect(jobExperienceFits(null, null, 1, true)).toBe(false);
+  });
+});
+
+describe("posting identity on careers sites", () => {
+  it("treats Eightfold-style /careers/job/<id> URLs with visit params as one posting (run 2: Qualcomm)", () => {
+    const clean = postingKey("https://careers.qualcomm.com/careers/job/446718909932");
+    expect(clean).toBe("careers_job:careers.qualcomm.com:446718909932");
+    expect(postingKey("https://careers.qualcomm.com/careers/job/446718909932?hl=en-US&domain=qualcomm.com&source=jobfound.org")).toBe(clean);
+    expect(postingKey("https://careers.qualcomm.com/careers/job/446721248684")).not.toBe(clean);
+  });
+});
+
+describe("OTP attribution activity", () => {
+  it("ignores a form that never opened", () => {
+    expect(couldHaveRequestedCode({ stage: "form_opened", outcome: "blocked" })).toBe(false);
+    expect(couldHaveRequestedCode({ stage: "form_opened", outcome: "failed" })).toBe(false);
+    expect(couldHaveRequestedCode({ stage: "form_opened", outcome: "ok" })).toBe(true);
+    expect(couldHaveRequestedCode({ stage: "submit_clicked", outcome: "blocked" })).toBe(true);
+    expect(couldHaveRequestedCode(null)).toBe(true);
   });
 });
 
@@ -157,6 +187,21 @@ describe("review_form_fields with saved answers", () => {
     expect(samePlace("Pune, Maharashtra, India", "Pune")).toBe(true);
     expect(samePlace("Pune", "Mumbai, India")).toBe(false);
     expect(review([{ label: "City", displayedValue: "Pune" }])[0].verdict).toBe("ok_unverified");
+  });
+  it("recognises link fields however they are labelled, but not questions", () => {
+    const withLinks = { ...profile, github: "https://github.com/asha", linkedin: "https://linkedin.com/in/asha" };
+    const r = reviewFields({
+      profile: withLinks,
+      declarationDefaults: {},
+      company: "Acme",
+      fields: [
+        { label: "GitHub URL (optional)", displayedValue: "" },
+        { label: "LinkedIn Profile URL*", displayedValue: "linkedin.com/in/asha" },
+        { label: "Your Github link", displayedValue: "" },
+        { label: "Do you have a GitHub account?", displayedValue: "" },
+      ],
+    });
+    expect(r.map((x) => x.verdict)).toEqual(["fill", "ok_unverified", "fill", "ask_candidate"]);
   });
   it("answers country from the profile", () => {
     expect(review([{ label: "Country", displayedValue: "" }])[0]).toMatchObject({ verdict: "fill", expected: "India" });

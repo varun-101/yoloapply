@@ -4,6 +4,7 @@ import { ApiUserError } from "../auth";
 import { extractFromUrl } from "../extractJob";
 import { getLlmConfig } from "../credentials";
 import { fetchInstahyrePosting, instahyreJobIdFromUrl } from "./instahyre";
+import { atsPostingFromUrl, fetchAtsDescription } from "./liveness";
 
 // Fetches a catalog lead's posting URL and stores the extracted job
 // description on the SHARED row (it benefits every user). Shared by
@@ -45,6 +46,21 @@ export async function refreshLeadJd(userId: string, lead: JobLead): Promise<JobL
         recruiterCompany: lead.recruiterCompany ?? posting.recruiterCompany ?? null,
       },
     });
+  }
+
+  // Greenhouse, Lever and Ashby publish the description as data: read it from
+  // their API instead of scraping (Ashby pages render client-side, so the
+  // scrape finds no text) and without spending the candidate's LLM key.
+  const ats = atsPostingFromUrl(lead.url);
+  if (ats) {
+    const desc = await fetchAtsDescription(ats);
+    if (desc.status === "closed") {
+      throw new ApiUserError(`This ${ats.ats} posting is no longer listed. It was probably filled or withdrawn.`, 422, "posting_gone");
+    }
+    if (desc.status === "open" && desc.text.trim().length >= 50) {
+      return prisma.jobLead.update({ where: { id: lead.id }, data: { jdText: desc.text } });
+    }
+    // Unreachable API or an empty body: fall through to the page scrape.
   }
 
   const llmCfg = await getLlmConfig(userId);

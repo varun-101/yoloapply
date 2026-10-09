@@ -581,7 +581,7 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
     {
       title: "Correct an unsubmitted application",
       description:
-        "Fix a draft or personalized application when the live posting differs from what was tracked: company, role (title), location, jdUrl, applyUrl or the job description. Refused once the application is applied or later. Changing company, role or description marks an existing resume stale (call prepare_resume again). Records what changed and why.",
+        "Fix a draft or personalized application when the live posting differs from what was tracked: company, role (title), location, jdUrl, applyUrl or the job description. markClosed=true closes it instead (posting closed, or a duplicate draft of another application), which also stops it counting as activity for get_application_otp; refused if a submit was ever clicked or confirmed. Refused once the application is applied or later. Changing company, role or description marks an existing resume stale (call prepare_resume again). Records what changed and why.",
       input: {
         applicationId: id,
         company: shortText(200).optional(),
@@ -590,7 +590,8 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
         jdUrl: z.string().url().max(2000).optional(),
         applyUrl: z.string().url().max(2000).optional(),
         jobDescription: z.string().trim().max(50_000).optional(),
-        reason: shortText(300).describe("Why, e.g. 'live title is Member of Technical Staff, Backend'."),
+        markClosed: z.boolean().default(false).describe("Close this unsubmitted application (posting closed or duplicate draft)."),
+        reason: shortText(300).describe("Why, e.g. 'live title is Member of Technical Staff, Backend' or 'duplicate of <applicationId>'."),
       },
       readOnly: false,
     },

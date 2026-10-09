@@ -209,9 +209,13 @@ export async function searchApplicationEmails(userId: string, input: SearchMailI
   if (until.getTime() - since.getTime() > 120 * 86_400_000) {
     throw new ApiUserError("Search windows are limited to 120 days.", 400, "window_too_large");
   }
-  const apps = await ownedApplications(userId, input.applicationId);
-  if (input.applicationId && !apps.length) throw new ApiUserError("Application not found.", 404, "not_found");
-  const company = input.company ?? (input.applicationId ? apps[0].company : undefined);
+  // Matches are always scored against every tracked application, exactly as
+  // get_application_email does, so a scoped search and a read of the same
+  // message report the same confidence.
+  const apps = await ownedApplications(userId);
+  const scoped = input.applicationId ? apps.find((a) => a.id === input.applicationId) : undefined;
+  if (input.applicationId && !scoped) throw new ApiUserError("Application not found.", 404, "not_found");
+  const company = input.company ?? scoped?.company;
   // Search the core name: "Qualcomm India Private Limited" as a phrase misses
   // mail from "Qualcomm Careers"; matching below still scores the full name.
   const term = company ? kqlTerm(companyAliases(company).at(-1) ?? company) : null;
@@ -225,9 +229,11 @@ export async function searchApplicationEmails(userId: string, input: SearchMailI
     const category = classifyMessage(m);
     if (!categories.has(category)) continue;
     const matches = matchApplications(m, apps);
+    // With an applicationId, only mail that matches THAT application counts.
+    const relevant = scoped ? matches.filter((x) => x.applicationId === scoped.id) : matches;
     // Unmatched mail is listed only when it is unmistakably application mail;
     // "other" mail must come from an ATS AND name a tracked employer.
-    if (!matches.length && (!input.includeUnmatched || category === "other")) continue;
+    if (!relevant.length && (!input.includeUnmatched || category === "other")) continue;
     if (category === "other" && !isAtsSender(m.fromAddress)) continue;
     const hideCodes = category === "verification_code" || CODE_WORDING.test(`${m.subject}\n${m.preview}`);
     results.push({
@@ -349,6 +355,17 @@ export function messageFingerprint(messageId: string): string {
 
 const OTP_ACTIVE_STATUSES = new Set(["draft", "personalized"]);
 
+/**
+ * Could this form activity have triggered a code email? A form that never
+ * opened (form_opened blocked/failed, e.g. "no longer accepting
+ * applications") could not, so looking at a dead posting doesn't block the
+ * code for the application actually in progress.
+ */
+export function couldHaveRequestedCode(metadata: unknown): boolean {
+  const m = (metadata ?? {}) as { stage?: unknown; outcome?: unknown };
+  return !(m.stage === "form_opened" && (m.outcome === "blocked" || m.outcome === "failed"));
+}
+
 export async function getApplicationOtp(
   userId: string,
   input: { applicationId: string; requestedAt: Date; maxAgeMinutes?: number },
@@ -371,9 +388,19 @@ export async function getApplicationOtp(
   // only the employer can't be attributed, so don't guess.
   const others = await prisma.application.findMany({
     where: { userId, id: { not: app.id }, status: { in: [...OTP_ACTIVE_STATUSES] } },
-    select: { id: true, company: true, events: { where: { type: { in: ["APPLICATION_ATTEMPT", "SUBMISSION_UNCONFIRMED"] }, createdAt: { gte: new Date(Date.now() - 30 * 60_000) } }, select: { id: true }, take: 1 } },
+    select: {
+      id: true,
+      company: true,
+      events: {
+        where: { type: { in: ["APPLICATION_ATTEMPT", "SUBMISSION_UNCONFIRMED"] }, createdAt: { gte: new Date(Date.now() - 30 * 60_000) } },
+        select: { metadata: true },
+        take: 20,
+      },
+    },
   });
-  const concurrent = others.filter((o) => o.events.length && normalizeCompany(o.company) === normalizeCompany(app.company));
+  const concurrent = others.filter(
+    (o) => o.events.some((e) => couldHaveRequestedCode(e.metadata)) && normalizeCompany(o.company) === normalizeCompany(app.company)
+  );
   if (concurrent.length) {
     return {
       applicationId: app.id,

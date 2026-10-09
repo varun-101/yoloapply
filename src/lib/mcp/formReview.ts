@@ -108,9 +108,11 @@ const RULES: { pattern: RegExp; fact: (p: CandidateProfile, s: Saved) => Fact | 
   { pattern: /^\s*(full )?name\s*\*?\s*$/i, fact: (p) => named(p.name, "profile.name") },
   { pattern: /^\s*(your )?e-?mail( address)?\s*\*?\s*$/i, fact: (p) => named(p.email, "profile.email") },
   { pattern: /^\s*(your )?(phone|mobile|cell)( (number|no\.?))?\s*\*?\s*$|^\s*contact number\s*\*?\s*$/i, fact: (p) => named(p.phone, "profile.phone", "digits") },
-  { pattern: /^\s*linked\s*in( profile| url| profile url)?\s*\*?\s*$/i, fact: (p) => named(p.linkedin, "profile.linkedin", "url") },
-  { pattern: /^\s*git\s*hub( profile| url| profile url)?\s*\*?\s*$/i, fact: (p) => named(p.github, "profile.github", "url") },
-  { pattern: /^\s*(portfolio|personal (web)?site|website)( url| link)?\s*\*?\s*$/i, fact: (p) => named(p.portfolio, "profile.portfolio", "url") },
+  // Link fields come labelled many ways ("LinkedIn Profile URL", "Github link
+  // (optional)", "Your LinkedIn"); a question ("Do you have a GitHub?") is not one.
+  { pattern: /^(?!.*\?)\s*(your )?linked\s*in\b[^?]*$/i, fact: (p) => named(p.linkedin, "profile.linkedin", "url") },
+  { pattern: /^(?!.*\?)\s*(your )?git\s*hub\b[^?]*$/i, fact: (p) => named(p.github, "profile.github", "url") },
+  { pattern: /^(?!.*\?)\s*(your )?(portfolio|personal (web)?site|website|blog)\b[^?]*$/i, fact: (p) => named(p.portfolio, "profile.portfolio", "url") },
   {
     pattern: /^\s*(current )?(location|city)( \(city\))?\s*\*?\s*$|\bwhere are you (currently )?(based|located)\b/i,
     fact: (p) =>

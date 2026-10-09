@@ -577,6 +577,38 @@ describe("agent friction fixes", () => {
     await c.close();
   });
 
+  it("closes a dead or duplicate draft, never one with a submit on record", async () => {
+    const c = await client(tokenA);
+    const dup = await prisma.application.create({ data: { userId: userA, company: "Dupe Co", role: "SDE", source: "manual", status: "personalized" } });
+    const r = structured<{ changed: boolean; changes: string[] }>(
+      await c.callTool({ name: "update_application_draft", arguments: { applicationId: dup.id, markClosed: true, reason: "duplicate of an existing draft" } })
+    );
+    expect(r.changes).toContain('status: "personalized" -> "closed"');
+    expect((await prisma.application.findUniqueOrThrow({ where: { id: dup.id } })).status).toBe("closed");
+    const clicked = await prisma.application.create({ data: { userId: userA, company: "Clicked Co", role: "SDE", source: "manual", status: "draft" } });
+    await c.callTool({ name: "record_application_attempt", arguments: { applicationId: clicked.id, stage: "submit_clicked", outcome: "blocked", note: "CAPTCHA" } });
+    expect(
+      errorCode(await c.callTool({ name: "update_application_draft", arguments: { applicationId: clicked.id, markClosed: true, reason: "test" } }))
+    ).toBe("submission_on_record");
+    await c.close();
+  });
+
+  it("dedupes careers-site postings that differ only by visit params", async () => {
+    await prisma.application.create({
+      data: { userId: userA, company: "Qualcomm India Private Limited", role: "Engineer, Asociate", source: "mcp", status: "personalized", jdUrl: "https://careers.qualcomm.com/careers/job/446718909932", canonicalUrl: "https://careers.qualcomm.com/careers/job/446718909932" },
+    });
+    const c = await client(tokenA);
+    const r = structured<{ duplicate: boolean; matches: { reason: string }[] }>(
+      await c.callTool({
+        name: "check_duplicate_application",
+        arguments: { url: "https://careers.qualcomm.com/careers/job/446718909932?hl=en-US&domain=qualcomm.com&source=jobfound.org" },
+      })
+    );
+    expect(r.duplicate).toBe(true);
+    expect(r.matches[0].reason).toBe("posting_id");
+    await c.close();
+  });
+
   it("corrects an unsubmitted draft and refuses submitted ones", async () => {
     const c = await client(tokenA);
     const app = await prisma.application.create({
@@ -668,6 +700,31 @@ describe("mail", () => {
       code: "not_application_mail",
     });
   });
+  it("reports the same match confidence for a scoped search as for a read", async () => {
+    const a1 = (await prisma.application.create({ data: { userId: userA, company: "Wayne", role: "Backend Engineer", source: "lever", status: "draft" } })).id;
+    await prisma.application.create({ data: { userId: userA, company: "Wayne", role: "Data Engineer", source: "lever", status: "draft" } });
+    const generic = graphMessage("AAMkWAYNEGEN0001", "Thank you for applying to Wayne", "We have received your application.", 20, "no-reply@hire.lever.co");
+    const scoped = await searchApplicationEmails(userA, { applicationId: a1, includeUnmatched: false, limit: 10 }, fakeGraph([generic]));
+    const read = await getApplicationEmail(userA, { messageId: generic.id, applicationId: a1 }, fakeGraph([generic]));
+    expect(scoped.messages[0].matchConfidence).toBe("ambiguous");
+    expect(read.matchConfidence).toBe("ambiguous");
+  });
+
+  it("does not let a dead posting's blocked form hold back the code", async () => {
+    const live = (await prisma.application.create({ data: { userId: userA, company: "Initrode", role: "SDE", source: "greenhouse", status: "draft", applyUrl: "https://job-boards.greenhouse.io/initrode/jobs/7" } })).id;
+    const dead = (await prisma.application.create({ data: { userId: userA, company: "Initrode", role: "Software Engineer", source: "greenhouse", status: "draft" } })).id;
+    await prisma.event.create({ data: { applicationId: dead, type: "APPLICATION_ATTEMPT", detail: "form_opened: blocked", metadata: { stage: "form_opened", outcome: "blocked" } } });
+    const code = graphMessage("AAMkINITRODE0001", "Initrode security code", "Your security code is 482913 for your Initrode application.", 1);
+    const requestedAt = new Date(Date.now() - 2 * 60_000);
+    expect(await getApplicationOtp(userA, { applicationId: live, requestedAt }, fakeGraph([code]))).toMatchObject({ kind: "code", code: "482913" });
+    // Real activity on the other application does make it ambiguous.
+    await prisma.event.create({ data: { applicationId: dead, type: "APPLICATION_ATTEMPT", detail: "resume_uploaded: ok", metadata: { stage: "resume_uploaded", outcome: "ok" } } });
+    expect((await getApplicationOtp(userA, { applicationId: live, requestedAt }, fakeGraph([code]))).kind).toBe("ambiguous");
+    // Closing the other draft clears it.
+    await prisma.application.update({ where: { id: dead }, data: { status: "closed" } });
+    expect((await getApplicationOtp(userA, { applicationId: live, requestedAt }, fakeGraph([code]))).kind).toBe("code");
+  });
+
   it("credits a receipt only to the single best-matching application", async () => {
     const backend = (await prisma.application.create({ data: { userId: userA, company: "Stark", role: "Backend Engineer", source: "lever", status: "draft" } })).id;
     const frontend = (await prisma.application.create({ data: { userId: userA, company: "Stark", role: "Frontend Engineer", source: "lever", status: "draft" } })).id;

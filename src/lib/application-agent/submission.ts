@@ -261,7 +261,9 @@ export async function recordApplicationAttempt(userId: string, applicationId: st
     status: application.status,
     recorded: metadata,
     guidance: unconfirmedSubmit
-      ? "Submission outcome is UNKNOWN and was not counted as applied. Search for a receipt (search_application_emails) and check the employer page before any retry. Record a confirmed submission only on positive evidence."
+      ? input.outcome === "blocked"
+        ? "Submission was BLOCKED (CAPTCHA, bot/spam check or a hard validation stop) and was not counted as applied. Do not work around it: hand a CAPTCHA to the candidate in the open tab (set_pending_questions so it stays visible), and treat an explicit spam rejection as final for this run. Because a click did happen, check search_application_emails for a receipt before anyone submits again."
+        : "Submission outcome is UNKNOWN and was not counted as applied. Search for a receipt (search_application_emails) and check the employer page before any retry. Record a confirmed submission only on positive evidence."
       : input.stage === "submit_clicked" && input.outcome === "ok"
         ? "A click alone is not evidence. Call record_confirmed_submission with the confirmation text/page you observed."
         : null,

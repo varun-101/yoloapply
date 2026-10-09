@@ -82,6 +82,8 @@ interface Row {
 }
 
 const LIVE_CHECK_BUDGET_MS = 20_000;
+// Return what was found before the 45 s tool timeout, with a cursor to go on.
+const SEARCH_DEADLINE_MS = 30_000;
 const LIVE_CHECK_AHEAD = 6;
 
 export function filterHash(filters: JobSearchFilters): string {
@@ -261,7 +263,10 @@ export async function searchJobs(userId: string, input: JobSearchInput) {
   const excludeUrls = filters.duplicatePolicy === "exclude" ? index.canonicalUrls() : [];
 
   const started = Date.now();
-  const batchSize = Math.min(400, Math.max(60, limit * 4));
+  // Full descriptions ride along when an experience filter needs them, so
+  // keep those batches smaller.
+  const batchSize = Math.min(filters.maxYearsExperience !== undefined ? 120 : 400, Math.max(60, limit * 4));
+  let partial = false;
   const maxScanned = 2_000;
   const results: ReturnType<typeof summarizeJob>[] = [];
   let scanned = 0;
@@ -271,7 +276,7 @@ export async function searchJobs(userId: string, input: JobSearchInput) {
   // Live checks share the tool's time budget; past it, rows report "unknown".
   const check = filters.verifyLive ? livenessChecker(LIVE_CHECK_BUDGET_MS) : null;
 
-  while (results.length < limit && scanned < maxScanned) {
+  while (results.length < limit && scanned < maxScanned && !partial) {
     const rows = await fetchBatch(userId, filters, excludeUrls, cursor, batchSize);
     if (!rows.length) {
       exhausted = true;
@@ -300,6 +305,12 @@ export async function searchJobs(userId: string, input: JobSearchInput) {
     };
     let next = 0;
     for (const { row, drop, dupes } of verdicts) {
+      // Stop at a row boundary: the cursor still points at the last row
+      // actually consumed, so the next page resumes exactly here.
+      if (Date.now() - started > SEARCH_DEADLINE_MS) {
+        partial = true;
+        break;
+      }
       scanned++;
       cursor = { v: 1, f: hash, at: new Date(row.effectiveAt).toISOString(), id: row.id, sc: row.score ?? -1 };
       if (drop) {
@@ -339,6 +350,9 @@ export async function searchJobs(userId: string, input: JobSearchInput) {
     scanned,
     filteredOut,
     markedUnavailable: closedIds,
+    ...(partial
+      ? { partial: true, note: "Stopped early to stay inside the tool timeout. Results so far are valid; continue with nextCursor (same filters)." }
+      : {}),
     timingMs: Date.now() - started,
     ordering:
       filters.sort === "score"

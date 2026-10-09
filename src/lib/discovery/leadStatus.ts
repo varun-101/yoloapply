@@ -36,7 +36,7 @@ export async function setLeadStatus(userId: string, jobLeadId: string, status: S
   });
   if (overlay?.status === "promoted") {
     throw new ApiUserError(
-      "This job is already promoted to an application; update the application's status instead.",
+      "This job is already promoted to an application. If it was never submitted, close it with update_application_draft markClosed=true; otherwise update the application's status.",
       400,
       "already_promoted"
     );
