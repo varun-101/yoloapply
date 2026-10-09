@@ -44,6 +44,22 @@ export function createShareToken(
   return { token: `${payloadB64}.${sign(payloadB64).toString("base64url")}`, expiresAt };
 }
 
+/**
+ * A minutes-long link for an agent to fetch the resume PDF into a browser
+ * upload without the bearer token. Same token format and public routes as a
+ * share link, so nothing new is exposed; it just dies much sooner.
+ */
+export function createShortLivedShareToken(
+  userId: string,
+  applicationId: string,
+  minutes = 15
+): { token: string; expiresAt: Date } {
+  const expiresAt = new Date(Date.now() + Math.min(Math.max(Math.round(minutes), 1), 60) * 60 * 1000);
+  const payload: SharePayload = { v: 1, app: applicationId, uid: userId, exp: Math.floor(expiresAt.getTime() / 1000) };
+  const payloadB64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  return { token: `${payloadB64}.${sign(payloadB64).toString("base64url")}`, expiresAt };
+}
+
 export type VerifiedShare =
   | { ok: true; applicationId: string; userId: string; expiresAt: Date }
   | { ok: false; reason: "invalid" | "expired" };

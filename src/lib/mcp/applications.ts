@@ -3,7 +3,7 @@ import { prisma } from "../db";
 import { ApiUserError } from "../auth";
 import { canonicalizeJobUrl } from "../jobs/url";
 import { ingestJob } from "../application-agent/ingest";
-import { initializeApplicationWorkflow, recordApplicationEvent } from "../application-agent/workflow";
+import { completeApplicationTask, initializeApplicationWorkflow, recordApplicationEvent } from "../application-agent/workflow";
 import { deriveSubmissionState, SUBMITTED_EVENT, UNCONFIRMED_EVENT } from "../application-agent/submission";
 import { loadApplicationIndex } from "./jobSearch";
 import type { DuplicateMatch } from "./jobIdentity";
@@ -12,6 +12,133 @@ import type { DuplicateMatch } from "./jobIdentity";
 // creating one never contacts an employer.
 
 const TRACKING_EVENTS = [SUBMITTED_EVENT, UNCONFIRMED_EVENT];
+
+// An application parked on questions only the candidate can answer. The latest
+// of these two events decides: NEEDED carries the open questions, RESOLVED
+// clears them. Events, not a status, so the tracker's statuses stay as they are.
+export const INPUT_NEEDED_EVENT = "CANDIDATE_INPUT_NEEDED";
+export const INPUT_RESOLVED_EVENT = "CANDIDATE_INPUT_RESOLVED";
+const INPUT_EVENTS = [INPUT_NEEDED_EVENT, INPUT_RESOLVED_EVENT];
+
+export interface PendingQuestion {
+  label: string;
+  why?: string;
+  options?: string[];
+  required?: boolean;
+}
+
+export function pendingQuestionsFrom(events: { type: string; createdAt: Date; metadata?: unknown }[]): PendingQuestion[] {
+  const latest = events
+    .filter((e) => INPUT_EVENTS.includes(e.type))
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+  if (!latest || latest.type !== INPUT_NEEDED_EVENT) return [];
+  const qs = (latest.metadata as { questions?: unknown } | null)?.questions;
+  return Array.isArray(qs) ? (qs.filter((q) => q && typeof (q as PendingQuestion).label === "string") as PendingQuestion[]) : [];
+}
+
+export async function setPendingQuestions(userId: string, applicationId: string, questions: PendingQuestion[]) {
+  const app = await prisma.application.findFirst({ where: { id: applicationId, userId }, select: { id: true, company: true, role: true } });
+  if (!app) throw new ApiUserError("Application not found.", 404, "not_found");
+  if (questions.length) {
+    await recordApplicationEvent(
+      app.id,
+      INPUT_NEEDED_EVENT,
+      `Waiting on the candidate: ${questions.map((q) => q.label).join("; ")}`.slice(0, 1000),
+      { questions } as unknown as Prisma.InputJsonValue
+    );
+  } else {
+    await recordApplicationEvent(app.id, INPUT_RESOLVED_EVENT, "Candidate input received; no open questions.");
+  }
+  return { applicationId: app.id, company: app.company, role: app.role, pendingQuestions: questions };
+}
+
+const EDITABLE_STATUSES = new Set(["draft", "personalized"]);
+type EditableField = "company" | "role" | "location" | "jdUrl" | "applyUrl";
+
+/**
+ * Corrects a tracked application that hasn't been submitted yet, typically
+ * when the live posting's title or URL differs from the cached catalog row.
+ */
+export async function updateApplicationDraft(
+  userId: string,
+  applicationId: string,
+  patch: Partial<Record<EditableField, string>> & { jobDescription?: string; reason: string }
+) {
+  const app = await prisma.application.findFirst({
+    where: { id: applicationId, userId },
+    select: {
+      id: true,
+      status: true,
+      company: true,
+      role: true,
+      location: true,
+      jdUrl: true,
+      applyUrl: true,
+      jdText: true,
+      canonicalUrl: true,
+      files: { where: { kind: "resume_pdf" }, select: { id: true } },
+    },
+  });
+  if (!app) throw new ApiUserError("Application not found.", 404, "not_found");
+  if (!EDITABLE_STATUSES.has(app.status)) {
+    throw new ApiUserError(
+      `Only draft or personalized applications can be edited here (status is "${app.status}").`,
+      409,
+      "application_not_editable"
+    );
+  }
+  const data: Prisma.ApplicationUpdateInput = {};
+  const changes: string[] = [];
+  for (const key of ["company", "role", "location", "jdUrl", "applyUrl"] as const) {
+    const v = patch[key]?.trim();
+    if (!v || v === app[key]) continue;
+    data[key] = v;
+    changes.push(`${key}: "${app[key] ?? ""}" -> "${v}"`);
+  }
+  const jd = patch.jobDescription?.trim();
+  if (jd && jd !== app.jdText) {
+    data.jdText = jd;
+    changes.push(`jobDescription: ${jd.length} chars`);
+  }
+  if (!changes.length) return { applicationId: app.id, changed: false, changes: [] as string[] };
+  let canonical: string | null = null;
+  if (data.jdUrl !== undefined || data.applyUrl !== undefined) {
+    canonical =
+      canonicalizeJobUrl(patch.applyUrl?.trim() || app.applyUrl) ?? canonicalizeJobUrl(patch.jdUrl?.trim() || app.jdUrl) ?? null;
+    if (canonical && canonical !== app.canonicalUrl) data.canonicalUrl = canonical;
+  }
+  try {
+    await prisma.application.update({ where: { id: app.id }, data });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002" && canonical) {
+      const existing = await prisma.application.findFirst({
+        where: { userId, canonicalUrl: canonical, id: { not: app.id } },
+        select: { id: true, status: true },
+      });
+      throw new ApiUserError(
+        `Another tracked application already uses that posting URL${existing ? ` (${existing.id}, ${existing.status})` : ""}.`,
+        409,
+        "duplicate_application"
+      );
+    }
+    throw error;
+  }
+  if (jd && jd.length >= 50) await completeApplicationTask(app.id, "PARSE_JOB").catch(() => {});
+  await recordApplicationEvent(
+    app.id,
+    "note",
+    `Updated by agent (${patch.reason.slice(0, 200)}): ${changes.join("; ")}`.slice(0, 1000)
+  );
+  // The resume was tailored to the old title/description.
+  const resumeStale = app.files.length > 0 && (data.company !== undefined || data.role !== undefined || data.jdText !== undefined);
+  return {
+    applicationId: app.id,
+    changed: true,
+    changes,
+    resumeStale,
+    ...(resumeStale ? { hint: "Call prepare_resume again so the resume matches the corrected posting." } : {}),
+  };
+}
 
 export async function checkDuplicate(
   userId: string,
@@ -161,7 +288,7 @@ export async function createDraft(
 
 export async function listApplications(
   userId: string,
-  input: { statuses?: string[]; company?: string; limit: number; cursor?: string }
+  input: { statuses?: string[]; company?: string; activitySince?: Date; needsInput?: boolean; limit: number; cursor?: string }
 ) {
   let after: { at: Date; id: string } | null = null;
   if (input.cursor) {
@@ -177,7 +304,22 @@ export async function listApplications(
     userId,
     ...(input.statuses?.length ? { status: { in: input.statuses } } : {}),
     ...(input.company ? { company: { contains: input.company, mode: "insensitive" } } : {}),
-    ...(after ? { OR: [{ createdAt: { lt: after.at } }, { createdAt: after.at, id: { lt: after.id } }] } : {}),
+    AND: [
+      ...(after ? [{ OR: [{ createdAt: { lt: after.at } }, { createdAt: after.at, id: { lt: after.id } }] }] : []),
+      // "What did this session touch": created, edited or any event since.
+      ...(input.activitySince
+        ? [
+            {
+              OR: [
+                { createdAt: { gte: input.activitySince } },
+                { updatedAt: { gte: input.activitySince } },
+                { events: { some: { createdAt: { gte: input.activitySince } } } },
+              ],
+            },
+          ]
+        : []),
+      ...(input.needsInput ? [{ events: { some: { type: INPUT_NEEDED_EVENT } } }] : []),
+    ],
   };
   const rows = await prisma.application.findMany({
     where,
@@ -195,25 +337,34 @@ export async function listApplications(
       applyUrl: true,
       personalizeStatus: true,
       files: { where: { kind: "resume_pdf" }, select: { updatedAt: true } },
-      events: { where: { type: { in: TRACKING_EVENTS } }, select: { type: true, createdAt: true } },
+      events: {
+        where: { type: { in: [...TRACKING_EVENTS, ...INPUT_EVENTS] } },
+        select: { type: true, createdAt: true, metadata: true },
+      },
     },
   });
   const page = rows.slice(0, input.limit);
   const last = page[page.length - 1];
+  const withPending = page.map((a) => ({ a, pending: pendingQuestionsFrom(a.events) }));
   return {
-    applications: page.map((a) => ({
-      applicationId: a.id,
-      company: a.company,
-      role: a.role,
-      status: a.status,
-      submissionState: deriveSubmissionState(a.status, a.events),
-      appliedAt: a.appliedAt,
-      createdAt: a.createdAt,
-      location: a.location,
-      url: a.applyUrl ?? a.jdUrl,
-      resumeReady: a.files.length > 0,
-      resumeGenerating: a.personalizeStatus === "running",
-    })),
+    // needsInput keeps only applications whose latest input event is still
+    // open, so a page can hold fewer than `limit` rows; keep paging.
+    applications: withPending
+      .filter(({ pending }) => !input.needsInput || pending.length > 0)
+      .map(({ a, pending }) => ({
+        applicationId: a.id,
+        company: a.company,
+        role: a.role,
+        status: a.status,
+        submissionState: deriveSubmissionState(a.status, a.events.filter((e) => TRACKING_EVENTS.includes(e.type))),
+        pendingQuestions: pending,
+        appliedAt: a.appliedAt,
+        createdAt: a.createdAt,
+        location: a.location,
+        url: a.applyUrl ?? a.jdUrl,
+        resumeReady: a.files.length > 0,
+        resumeGenerating: a.personalizeStatus === "running",
+      })),
     nextCursor:
       rows.length > input.limit && last
         ? Buffer.from(JSON.stringify({ at: last.createdAt.toISOString(), id: last.id })).toString("base64url")
@@ -233,10 +384,18 @@ export async function getApplicationDetail(userId: string, applicationId: string
   });
   if (!app) throw new ApiUserError("Application not found.", 404, "not_found");
   // Submission state from ALL tracking events, not just the recent page.
-  const tracking = await prisma.event.findMany({
-    where: { applicationId: app.id, type: { in: TRACKING_EVENTS } },
-    select: { type: true, createdAt: true },
-  });
+  const [tracking, inputEvents] = await Promise.all([
+    prisma.event.findMany({
+      where: { applicationId: app.id, type: { in: TRACKING_EVENTS } },
+      select: { type: true, createdAt: true },
+    }),
+    prisma.event.findMany({
+      where: { applicationId: app.id, type: { in: INPUT_EVENTS } },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+      select: { type: true, createdAt: true, metadata: true },
+    }),
+  ]);
   const { events, rawJdText: _raw, ...rest } = app;
   void _raw;
   const cap = (v: string | null, n: number) => (v && v.length > n ? v.slice(0, n) + " [truncated]" : v);
@@ -246,6 +405,7 @@ export async function getApplicationDetail(userId: string, applicationId: string
     notes: cap(rest.notes, 5_000),
     coverLetterText: cap(rest.coverLetterText, 10_000),
     submissionState: deriveSubmissionState(app.status, tracking),
+    pendingQuestions: pendingQuestionsFrom(inputEvents),
     events: events.map((e) => {
       const meta = e.metadata == null ? null : JSON.stringify(e.metadata);
       return {

@@ -1,4 +1,4 @@
-import { normalizeCompany, normalizeRole } from "../jobIdentity";
+import { companyAliases, normalizeCompany, normalizeRole } from "../jobIdentity";
 import { looksCodeBearing } from "./otp";
 
 // Pure classification of mailbox messages for application tracking. Nothing
@@ -149,24 +149,27 @@ export function matchApplications(m: MailMessage, apps: ApplicationForMatching[]
   const fromName = m.fromName;
   const fromDomain = senderDomain(m.fromAddress);
   for (const app of apps) {
-    const company = normalizeCompany(app.company);
-    if (!company || company.length < 2) continue;
+    // The legal name and its core ("qualcomm india" -> "qualcomm"): employers
+    // mail as "Qualcomm Careers", not under the registered entity name.
+    const names = companyAliases(app.company).filter((n) => n.length >= 2);
+    if (!names.length) continue;
+    const named = (text: string) => names.some((n) => wordsIn(text, n));
     const signals: string[] = [];
     let score = 0;
-    if (wordsIn(subject, company)) {
+    if (named(subject)) {
       score += 3;
       signals.push("company_in_subject");
     }
-    if (wordsIn(fromName, company)) {
+    if (named(fromName)) {
       score += 3;
       signals.push("company_in_sender_name");
     }
-    const compactCompany = company.replace(/\s+/g, "");
-    if (compactCompany.length >= 4 && fromDomain.replace(/[^a-z0-9.]/g, "").split(".").includes(compactCompany)) {
+    const domainLabels = fromDomain.replace(/[^a-z0-9.]/g, "").split(".");
+    if (names.some((n) => n.replace(/\s+/g, "").length >= 4 && domainLabels.includes(n.replace(/\s+/g, "")))) {
       score += 3;
       signals.push("company_sender_domain");
     }
-    if (wordsIn(body, company)) {
+    if (named(body)) {
       score += 2;
       signals.push("company_in_body");
     }

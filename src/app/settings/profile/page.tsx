@@ -5,6 +5,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, FileUp, Loader2, Plus, Save, Sparkles, Trash2 } from "lucide-react";
 import type { ResumeImportProfile } from "@/lib/resumeImport";
+import { SavedAnswersCard } from "@/components/settings/saved-answers";
 
 interface Education {
   degree: string;
@@ -560,6 +561,8 @@ export default function ProfileSettings() {
           </div>
         </CardContent>
       </Card>
+
+      <SavedAnswersCard />
 
       <Card>
         <CardHeader>

@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db";
 import { ApiUserError } from "../../auth";
 import { getMicrosoftAccessToken, microsoftConfigured } from "../../microsoft/oauth";
-import { normalizeCompany } from "../jobIdentity";
+import { companyAliases, normalizeCompany } from "../jobIdentity";
 import {
   classifyMessage,
   isAtsSender,
@@ -212,7 +212,9 @@ export async function searchApplicationEmails(userId: string, input: SearchMailI
   const apps = await ownedApplications(userId, input.applicationId);
   if (input.applicationId && !apps.length) throw new ApiUserError("Application not found.", 404, "not_found");
   const company = input.company ?? (input.applicationId ? apps[0].company : undefined);
-  const term = company ? kqlTerm(company) : null;
+  // Search the core name: "Qualcomm India Private Limited" as a phrase misses
+  // mail from "Qualcomm Careers"; matching below still scores the full name.
+  const term = company ? kqlTerm(companyAliases(company).at(-1) ?? company) : null;
   const listing = await listMessages(graph, { since, until, term, maxMessages: 300 });
   const raw = listing.messages;
 

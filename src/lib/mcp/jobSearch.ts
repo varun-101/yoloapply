@@ -3,11 +3,14 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { ApiUserError } from "../auth";
 import { sourceTier, SOURCE_LABEL } from "../discovery/types";
+import { livenessChecker, type LivenessResult } from "../discovery/liveness";
+import { setLeadStatus } from "../discovery/leadStatus";
 import {
   ApplicationIndex,
   describeSalary,
-  experienceFits,
+  jdExperienceRequirement,
   jdQualityOf,
+  jobExperienceFits,
   type ApplicationRef,
   type DuplicateMatch,
 } from "./jobIdentity";
@@ -34,6 +37,8 @@ export interface JobSearchFilters {
   requireDescription: boolean;
   duplicatePolicy: "exclude" | "flag";
   sort: "recent" | "score";
+  /** Ask Greenhouse/Lever/Ashby whether each result is still listed; closed ones are skipped and marked. */
+  verifyLive?: boolean;
 }
 
 export interface JobSearchInput extends JobSearchFilters {
@@ -68,11 +73,16 @@ interface Row {
   effectiveAt: Date;
   jdLength: number | null;
   jdHead: string | null;
+  /** Full description, selected only when an experience filter needs it. */
+  jdText: string | null;
   userStatus: string | null;
   score: number | null;
   scoreReason: string | null;
   applicationId: string | null;
 }
+
+const LIVE_CHECK_BUDGET_MS = 20_000;
+const LIVE_CHECK_AHEAD = 6;
 
 export function filterHash(filters: JobSearchFilters): string {
   const normalized = JSON.stringify(filters, Object.keys(filters).sort());
@@ -183,6 +193,7 @@ async function fetchBatch(
            jl."canonicalUrl", jl.salary, jl."jobType", jl.experience, jl."postedAt", jl."createdAt",
            jl."updatedAt", COALESCE(jl."postedAt", jl."createdAt") AS "effectiveAt",
            length(jl."jdText")::int AS "jdLength", left(jl."jdText", 1200) AS "jdHead",
+           ${f.maxYearsExperience !== undefined ? Prisma.sql`jl."jdText"` : Prisma.sql`NULL::text`} AS "jdText",
            ul.status AS "userStatus", ul.score, ul."scoreReason", ul."applicationId"
     FROM "JobLead" jl
     LEFT JOIN "UserLead" ul ON ul."jobLeadId" = jl.id AND ul."userId" = ${userId}
@@ -209,7 +220,7 @@ export async function loadApplicationIndex(userId: string): Promise<ApplicationI
   return new ApplicationIndex(apps);
 }
 
-export function summarizeJob(row: Row, duplicates: DuplicateMatch[]) {
+export function summarizeJob(row: Row, duplicates: DuplicateMatch[], liveness?: LivenessResult) {
   const sources = [...new Set([row.source, ...(row.sources ?? "").split(",").map((s) => s.trim()).filter(Boolean)])];
   return {
     jobId: row.id,
@@ -218,6 +229,9 @@ export function summarizeJob(row: Row, duplicates: DuplicateMatch[]) {
     location: row.location,
     jobType: row.jobType,
     experience: row.experience,
+    // Read from the full description when an experience filter was applied:
+    // listing bands ("0-1 yrs") often understate the employer's bar.
+    experienceFromDescription: row.jdText ? jdExperienceRequirement(row.jdText) : undefined,
     salary: describeSalary(row.salary),
     url: row.url,
     sources,
@@ -230,6 +244,7 @@ export function summarizeJob(row: Row, duplicates: DuplicateMatch[]) {
     dateBasis: row.postedAt ? "posted" : "discovered",
     jdQuality: jdQualityOf(row.jdLength, row.jdHead),
     fit: row.score === null ? null : { score: row.score, reason: row.scoreReason },
+    liveness: liveness ?? null,
     tracking: {
       overlayStatus: row.userStatus ?? "new",
       applicationId: row.applicationId,
@@ -251,7 +266,10 @@ export async function searchJobs(userId: string, input: JobSearchInput) {
   const results: ReturnType<typeof summarizeJob>[] = [];
   let scanned = 0;
   let exhausted = false;
-  const filteredOut = { experience: 0, duplicates: 0 };
+  const filteredOut = { experience: 0, duplicates: 0, closed: 0 };
+  const closedIds: string[] = [];
+  // Live checks share the tool's time budget; past it, rows report "unknown".
+  const check = filters.verifyLive ? livenessChecker(LIVE_CHECK_BUDGET_MS) : null;
 
   while (results.length < limit && scanned < maxScanned) {
     const rows = await fetchBatch(userId, filters, excludeUrls, cursor, batchSize);
@@ -259,22 +277,48 @@ export async function searchJobs(userId: string, input: JobSearchInput) {
       exhausted = true;
       break;
     }
-    for (const row of rows) {
-      scanned++;
-      cursor = { v: 1, f: hash, at: new Date(row.effectiveAt).toISOString(), id: row.id, sc: row.score ?? -1 };
+    // Cheap filters first, for the whole batch, so live checks can start a few
+    // rows ahead of where results are consumed.
+    const verdicts = rows.map((row) => {
       if (
         filters.maxYearsExperience !== undefined &&
-        !experienceFits(row.experience, filters.maxYearsExperience, filters.requireKnownExperience)
+        !jobExperienceFits(row.experience, row.jdText, filters.maxYearsExperience, filters.requireKnownExperience)
       ) {
-        filteredOut.experience++;
-        continue;
+        return { row, drop: "experience" as const, dupes: [] as DuplicateMatch[] };
       }
       const dupes = index.match({ urls: [row.url, row.canonicalUrl], company: row.company, role: row.role });
-      if (filters.duplicatePolicy === "exclude" && dupes.length) {
-        filteredOut.duplicates++;
+      if (filters.duplicatePolicy === "exclude" && dupes.length) return { row, drop: "duplicates" as const, dupes };
+      return { row, drop: null, dupes };
+    });
+    const candidates = verdicts.filter((v) => !v.drop).map((v) => v.row);
+    const checks = new Map<string, Promise<LivenessResult>>();
+    const prefetch = (from: number) => {
+      if (!check) return;
+      for (const row of candidates.slice(from, from + LIVE_CHECK_AHEAD)) {
+        if (!checks.has(row.id)) checks.set(row.id, check(row));
+      }
+    };
+    let next = 0;
+    for (const { row, drop, dupes } of verdicts) {
+      scanned++;
+      cursor = { v: 1, f: hash, at: new Date(row.effectiveAt).toISOString(), id: row.id, sc: row.score ?? -1 };
+      if (drop) {
+        filteredOut[drop]++;
         continue;
       }
-      results.push(summarizeJob(row, dupes));
+      let live: LivenessResult | undefined;
+      if (check) {
+        prefetch(next);
+        live = await checks.get(row.id)!;
+        next++;
+        if (live.status === "closed") {
+          filteredOut.closed++;
+          // Only a "new" lead is moved; a dismissal stays a dismissal.
+          if (!row.userStatus || row.userStatus === "new") closedIds.push(row.id);
+          continue;
+        }
+      }
+      results.push(summarizeJob(row, dupes, live));
       if (results.length >= limit) break;
     }
     if (rows.length < batchSize && results.length < limit) {
@@ -283,11 +327,18 @@ export async function searchJobs(userId: string, input: JobSearchInput) {
     }
   }
 
+  // The ATS itself says these are gone: record it so Discover and later
+  // searches skip them too (per user, like the manual "No longer available").
+  for (const id of closedIds) {
+    await setLeadStatus(userId, id, "closed").catch(() => {});
+  }
+
   return {
     jobs: results,
     nextCursor: exhausted && results.length < limit ? null : cursor ? encodeCursor(cursor) : null,
     scanned,
     filteredOut,
+    markedUnavailable: closedIds,
     timingMs: Date.now() - started,
     ordering:
       filters.sort === "score"

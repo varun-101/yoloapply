@@ -76,6 +76,39 @@ export function normalizeCompany(company: string): string {
   return words.join(" ");
 }
 
+// Trailing words that name a regional entity rather than the employer:
+// "Qualcomm India Private Limited" mails as "Qualcomm Careers".
+const REGION_WORDS = new Set([
+  "india", "usa", "us", "uk", "america", "americas", "emea", "apac", "asia", "europe", "global", "international",
+  "worldwide", "germany", "singapore", "canada", "australia", "japan", "china", "ireland", "netherlands", "france",
+  "technologies", "solutions", "services", "group", "holdings",
+]);
+const JOINERS = new Set(["of", "for", "and", "the", "de", "la"]);
+// A core this generic would match unrelated mail, so the full name is kept.
+const GENERIC_CORES = new Set(["software", "systems", "data", "cloud", "digital", "tech", "technology", "labs", "the", "new", "one"]);
+
+/**
+ * Names an employer goes by in mail: the normalized legal name, plus a core
+ * name with trailing region/entity words removed ("qualcomm india" ->
+ * "qualcomm"). Stripping stops before a joiner, so "Bank of India" stays whole,
+ * and never leaves a core shorter than 3 characters.
+ */
+export function companyAliases(company: string): string[] {
+  const full = normalizeCompany(company);
+  if (!full) return [];
+  const words = full.split(" ");
+  while (
+    words.length > 1 &&
+    (REGION_WORDS.has(words[words.length - 1]) || COMPANY_SUFFIXES.has(words[words.length - 1])) &&
+    !JOINERS.has(words[words.length - 2])
+  ) {
+    words.pop();
+  }
+  const core = words.join(" ");
+  const usable = core.length >= 3 && !GENERIC_CORES.has(core) && !REGION_WORDS.has(core);
+  return core !== full && usable ? [full, core] : [full];
+}
+
 export function normalizeRole(role: string): string {
   return normalizeWords(role).join(" ");
 }
@@ -119,6 +152,55 @@ export function experienceFits(text: string | null | undefined, maxYears: number
   const range = parseExperienceRange(text);
   if (!range) return !requireKnown;
   return range.min <= maxYears;
+}
+
+export interface JdExperience extends ExperienceRange {
+  /** The sentence the requirement was read from, for the agent to check. */
+  quote: string;
+}
+
+const YEARS = /\d+(?:\.\d+)?\s*(?:\+\s*)?(?:(?:-|–|to)\s*\d+(?:\.\d+)?\s*\+?\s*)?(?:years?|yrs?)\b/i;
+const EXPERIENCE_WORD = /\bexp(?:erience|\.)?\b|\bindustry\b|\bprofessional\b|\bhands[- ]on\b/i;
+const NOT_REQUIRED = /\b(preferred|nice[- ]to[- ]have|bonus|a plus|is a plus|ideally|desired|desirable|advantage|optional)\b/i;
+const NOT_EXPERIENCE = /\b(years? old|years? of age|founded|in business|for over|since \d{4}|track record of \d+|warranty|anniversary)\b/i;
+
+/**
+ * The experience a description actually requires: listing fields ("0-1 yrs")
+ * are often a board's band, not the employer's bar. Reads sentences that
+ * state years of experience, skips preferred/bonus ones, and returns the
+ * LOWEST stated requirement (several lines usually mean per-skill minimums).
+ */
+export function jdExperienceRequirement(jdText: string | null | undefined): JdExperience | null {
+  if (!jdText) return null;
+  let best: JdExperience | null = null;
+  const sentences = jdText.split(/(?<=[.;!?])\s+|\n+/);
+  for (const raw of sentences) {
+    const s = raw.trim();
+    if (s.length > 400 || !YEARS.test(s) || !EXPERIENCE_WORD.test(s)) continue;
+    if (NOT_REQUIRED.test(s) || NOT_EXPERIENCE.test(s)) continue;
+    const range = parseExperienceRange(s);
+    if (!range || range.min > 20) continue;
+    if (!best || range.min < best.min) best = { ...range, quote: s.replace(/\s+/g, " ").slice(0, 200) };
+  }
+  return best;
+}
+
+/**
+ * Experience fit using the listing field AND the description: the stricter
+ * (higher) stated minimum wins, since a "0-1 years" listing band does not
+ * lower an employer's "3+ years" requirement.
+ */
+export function jobExperienceFits(
+  listing: string | null | undefined,
+  jdText: string | null | undefined,
+  maxYears: number,
+  requireKnown = false
+): boolean {
+  const mins = [parseExperienceRange(listing)?.min, jdExperienceRequirement(jdText)?.min].filter(
+    (v): v is number => typeof v === "number"
+  );
+  if (!mins.length) return !requireKnown;
+  return Math.max(...mins) <= maxYears;
 }
 
 export interface SalaryInfo {

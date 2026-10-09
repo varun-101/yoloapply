@@ -5,6 +5,12 @@ import { getLlmConfigOrNull } from "../credentials";
 import { ensureSearchPrefs } from "../searchPrefs";
 import { prisma } from "../db";
 import { ACTED_LEAD_STATUSES } from "./leadStatus";
+import { jdExperienceRequirement } from "../mcp/jobIdentity";
+
+function jdExperience(jdText: string | null): string | null {
+  const req = jdExperienceRequirement(jdText);
+  return req ? `description states: "${req.quote}"` : null;
+}
 
 // LLM fit-scoring against the shared catalog, per user with the user's own
 // DeepSeek key and profile. Each scored posting lands in that user's UserLead
@@ -87,6 +93,8 @@ async function scoreBatch(
         `role: ${l.role} @ ${l.company}`,
         l.location ? `location: ${l.location}` : null,
         l.experience ? `experience required: ${l.experience}` : null,
+        // The excerpt below is short; the years requirement usually sits deeper.
+        jdExperience(l.jdText),
         l.salary ? `salary: ${l.salary}` : null,
         l.skills ? `skills: ${l.skills}` : null,
         l.jdText ? `jd excerpt: ${l.jdText.slice(0, 350).replace(/\s+/g, " ")}` : null,

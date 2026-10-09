@@ -12,6 +12,7 @@ import { getApplicationOtp, getApplicationEmail, searchApplicationEmails, type G
 import { PATCH as patchApplication } from "@/app/api/applications/[id]/route";
 import { PATCH as patchLead } from "@/app/api/discovery/leads/[id]/route";
 import { GET as listLeads } from "@/app/api/discovery/leads/route";
+import { GET as listSavedAnswers, DELETE as deleteSavedAnswerRoute } from "@/app/api/settings/saved-answers/route";
 
 // Integration tests on the disposable database: the real HTTP handler, the
 // real SDK client over an in-process fetch, real Prisma queries.
@@ -272,7 +273,7 @@ describe("search_jobs", () => {
     expect(page.jobs.length).toBeGreaterThan(0);
     expect(page.jobs.every((j) => j.sources.includes("instahyre"))).toBe(true);
     const flagged = structured<Page>(
-      await c.callTool({ name: "search_jobs", arguments: { companies: ["acme", "initech"], duplicatePolicy: "flag", limit: 10 } })
+      await c.callTool({ name: "search_jobs", arguments: { companies: ["acme", "initech"], duplicatePolicy: "flag", verifyLive: false, limit: 10 } })
     );
     expect(flagged.jobs.length).toBe(2);
     expect(flagged.jobs.every((j) => j.tracking.possibleDuplicates.length === 1)).toBe(true);
@@ -459,6 +460,139 @@ describe("tracking", () => {
     expect(errorCode(await c.callTool({ name: "prepare_resume", arguments: { applicationId: appA } }))).toBe("no_llm_key");
     const status = structured<{ status: string }>(await c.callTool({ name: "get_resume_status", arguments: { applicationId: appA } }));
     expect(status.status).toBe("idle");
+    await c.close();
+  });
+});
+
+describe("agent friction fixes", () => {
+  it("skips and marks postings their ATS reports closed", async () => {
+    const [dead, open] = await Promise.all([
+      prisma.jobLead.create({
+        data: { source: "greenhouse", externalId: "999", company: "DeadCo", role: "Engineer", url: "https://job-boards.greenhouse.io/deadco/jobs/999", postedAt: new Date() },
+      }),
+      prisma.jobLead.create({
+        data: { source: "lever", externalId: "4524ca30-d006-48bc-81c2-cec58e1bb399", company: "OpenCo", role: "Engineer", url: "https://jobs.lever.co/openco/4524ca30-d006-48bc-81c2-cec58e1bb399", postedAt: new Date() },
+      }),
+    ]);
+    const asked: string[] = [];
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const u = String(input instanceof Request ? input.url : input);
+      asked.push(u);
+      if (u.startsWith("https://boards-api.greenhouse.io/")) return new Response("{}", { status: 404 });
+      if (u.startsWith("https://api.lever.co/")) return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      throw new Error(`unexpected fetch ${u}`);
+    });
+    try {
+      const c = await client(tokenA);
+      const page = structured<{ jobs: { jobId: string; liveness: { status: string } }[]; filteredOut: { closed: number }; markedUnavailable: string[] }>(
+        await c.callTool({ name: "search_jobs", arguments: { companies: ["DeadCo", "OpenCo"], limit: 10 } })
+      );
+      expect(page.jobs.map((j) => j.jobId)).toEqual([open.id]);
+      expect(page.jobs[0].liveness.status).toBe("open");
+      expect(page.filteredOut.closed).toBe(1);
+      expect(page.markedUnavailable).toEqual([dead.id]);
+      expect((await prisma.userLead.findFirstOrThrow({ where: { userId: userA, jobLeadId: dead.id } })).status).toBe("closed");
+      // Per candidate: B's overlay is untouched.
+      expect(await prisma.userLead.count({ where: { userId: userB, jobLeadId: dead.id } })).toBe(0);
+      const job = structured<{ liveness: { status: string }; tracking: { overlayStatus: string } }>(
+        await c.callTool({ name: "get_job", arguments: { jobId: dead.id } })
+      );
+      expect(job).toMatchObject({ liveness: { status: "closed" }, tracking: { overlayStatus: "closed" } });
+      expect(asked.every((u) => u.startsWith("https://boards-api.greenhouse.io/") || u.startsWith("https://api.lever.co/"))).toBe(true);
+      await c.close();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("saves the candidate's answer once and reuses it in form review", async () => {
+    const c = await client(tokenA);
+    const before = structured<{ fields: { verdict: string }[] }>(
+      await c.callTool({ name: "review_form_fields", arguments: { company: "Hooli", fields: [{ label: "Expected CTC", displayedValue: "" }] } })
+    );
+    expect(before.fields[0].verdict).toBe("review_sensitive"); // salary: only a saved answer may fill it
+    const saved = structured<{ key: string; alsoSetProfileField: string | null }>(
+      await c.callTool({
+        name: "save_candidate_answer",
+        arguments: { key: "expectedSalary", question: "Expected annual CTC", answer: "INR 10,00,000", candidateStatement: "expect 10 lakh" },
+      })
+    );
+    expect(saved).toMatchObject({ key: "expectedSalary", alsoSetProfileField: null });
+    await c.callTool({
+      name: "save_candidate_answer",
+      arguments: { key: "noticePeriod", question: "Notice period", answer: "Immediate", candidateStatement: "I can join immediately" },
+    });
+    const after = structured<{ fields: { verdict: string; expected?: string }[] }>(
+      await c.callTool({
+        name: "review_form_fields",
+        arguments: { company: "Hooli", fields: [{ label: "Expected CTC", displayedValue: "" }, { label: "Notice period", displayedValue: "Immediate" }] },
+      })
+    );
+    expect(after.fields[0]).toMatchObject({ verdict: "fill", expected: "INR 10,00,000" });
+    expect(after.fields[1].verdict).toBe("ok_unverified");
+    const profile = await prisma.userProfile.findUniqueOrThrow({ where: { userId: userA } });
+    const answers = profile.applicationAnswers as Record<string, unknown>;
+    expect(answers.noticePeriod).toBe("Immediate");
+    expect(answers.consentPreferences).toEqual({ smsMessages: "yes" }); // untouched
+    expect(answers.declarationDefaults).toBeTruthy();
+    // Not readable or writable by another candidate.
+    const other = await prisma.userProfile.findUniqueOrThrow({ where: { userId: userB } });
+    expect((other.applicationAnswers as Record<string, unknown>).savedAnswers).toBeUndefined();
+    // Settings lists and removes it.
+    const auth = { authorization: `Bearer ${tokenA}` };
+    const listed = (await (await listSavedAnswers(new NextRequest(`${BASE}/api/settings/saved-answers`, { headers: auth }))).json()) as { answers: { key: string }[] };
+    expect(listed.answers.map((a) => a.key).sort()).toEqual(["expectedSalary", "noticePeriod"]);
+    const del = await deleteSavedAnswerRoute(new NextRequest(`${BASE}/api/settings/saved-answers?key=expectedSalary`, { method: "DELETE", headers: auth }));
+    expect(await del.json()).toEqual({ removed: true });
+    const remaining = structured<{ fields: { verdict: string }[] }>(
+      await c.callTool({ name: "review_form_fields", arguments: { company: "Hooli", fields: [{ label: "Expected CTC", displayedValue: "" }] } })
+    );
+    expect(remaining.fields[0].verdict).toBe("review_sensitive");
+    await c.close();
+  });
+
+  it("parks an application on questions and lists what a session touched", async () => {
+    const sessionStart = new Date().toISOString();
+    const app = await prisma.application.create({ data: { userId: userA, company: "Parked Co", role: "SDE", source: "manual", status: "draft" } });
+    const c = await client(tokenA);
+    await c.callTool({
+      name: "set_pending_questions",
+      arguments: { applicationId: app.id, questions: [{ label: "Notice period", why: "required field", required: true }] },
+    });
+    type List = { applications: { applicationId: string; pendingQuestions: { label: string }[] }[] };
+    const parked = structured<List>(await c.callTool({ name: "list_applications", arguments: { needsInput: true } }));
+    expect(parked.applications.map((a) => a.applicationId)).toEqual([app.id]);
+    expect(parked.applications[0].pendingQuestions[0].label).toBe("Notice period");
+    const touched = structured<List>(await c.callTool({ name: "list_applications", arguments: { activitySince: sessionStart } }));
+    expect(touched.applications.map((a) => a.applicationId)).toContain(app.id);
+    expect(touched.applications.map((a) => a.applicationId)).not.toContain(appB);
+    await c.callTool({ name: "set_pending_questions", arguments: { applicationId: app.id, questions: [] } });
+    expect(structured<List>(await c.callTool({ name: "list_applications", arguments: { needsInput: true } })).applications).toHaveLength(0);
+    const detail = structured<{ pendingQuestions: unknown[] }>(await c.callTool({ name: "get_application", arguments: { applicationId: app.id } }));
+    expect(detail.pendingQuestions).toEqual([]);
+    // Another candidate can't park it.
+    const cb = await client(tokenB);
+    expect(errorCode(await cb.callTool({ name: "set_pending_questions", arguments: { applicationId: app.id, questions: [] } }))).toBe("not_found");
+    await cb.close();
+    await c.close();
+  });
+
+  it("corrects an unsubmitted draft and refuses submitted ones", async () => {
+    const c = await client(tokenA);
+    const app = await prisma.application.create({
+      data: { userId: userA, company: "Coram AI", role: "Backend Engineer (India)", source: "ashby", status: "draft", jdUrl: "https://jobs.ashbyhq.com/coram-ai/4689a957-bf88-4eea-9b32-004025bf4544" },
+    });
+    const r = structured<{ changed: boolean; changes: string[]; resumeStale: boolean }>(
+      await c.callTool({
+        name: "update_application_draft",
+        arguments: { applicationId: app.id, role: "Member of Technical Staff, Backend", reason: "live title differs" },
+      })
+    );
+    expect(r).toMatchObject({ changed: true, resumeStale: false });
+    expect((await prisma.application.findUniqueOrThrow({ where: { id: app.id } })).role).toBe("Member of Technical Staff, Backend");
+    expect(
+      errorCode(await c.callTool({ name: "update_application_draft", arguments: { applicationId: appA, role: "Other", reason: "test" } }))
+    ).toBe("application_not_editable");
     await c.close();
   });
 });

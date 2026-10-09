@@ -22,10 +22,26 @@ interface Input {
 // project count, type scale and spacing are chosen from the compiled PDF so
 // the page is one full page. Overflow is never clipped; if nothing fits,
 // fitOnePage throws and the run is recorded as failed.
-export async function personalizeOnePage(userId: string, input: Input): Promise<OnePageResult> {
+export interface OnePageProgress {
+  stage: "tailoring" | "fitting";
+  compiles: number;
+}
+
+export async function personalizeOnePage(
+  userId: string,
+  input: Input,
+  onProgress?: (p: OnePageProgress) => void
+): Promise<OnePageResult> {
   const ctx = await loadPersonalizeContext(userId);
+  onProgress?.({ stage: "tailoring", compiles: 0 });
   const doc = await tailorResume(ctx, input);
-  const fit = await fitOnePage(doc, compileLatex);
+  let compiles = 0;
+  onProgress?.({ stage: "fitting", compiles });
+  const fit = await fitOnePage(doc, async (tex) => {
+    const pdf = await compileLatex(tex);
+    onProgress?.({ stage: "fitting", compiles: ++compiles });
+    return pdf;
+  });
   return {
     tex: fit.tex,
     pdf: fit.pdf,

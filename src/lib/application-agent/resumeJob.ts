@@ -41,13 +41,25 @@ async function claim(app: Owned): Promise<boolean> {
   return true;
 }
 
+// Typical wall time of one generation: one LLM tailoring call, then 4-6
+// compiles while the layout is fitted to one page.
+export const RESUME_TYPICAL_SECONDS = { min: 30, max: 75 };
+
 async function generate(userId: string, app: Owned) {
   try {
-    const result = await personalizeOnePage(userId, {
-      company: app.company,
-      role: app.role,
-      jobDescription: app.jdText!,
-    });
+    const result = await personalizeOnePage(
+      userId,
+      { company: app.company, role: app.role, jobDescription: app.jdText! },
+      (p) => {
+        // Best-effort progress for get_resume_status; never fails the run.
+        prisma.applicationTask
+          .updateMany({
+            where: { applicationId: app.id, key: "GENERATE_RESUME" },
+            data: { metadata: { progress: { ...p, at: new Date().toISOString() } } },
+          })
+          .catch(() => {});
+      }
+    );
     const profile = await getProfile(userId);
     await saveResumeArtifacts(userId, app.id, result.tex, result.pdf, resumeFilename(profile, "Resume", app.company));
     const updated = await prisma.application.update({
@@ -120,9 +132,20 @@ export async function getResumeStatus(userId: string, applicationId: string) {
       : pdf
         ? "completed"
         : "idle";
+  const meta = (task?.metadata ?? null) as { progress?: { stage?: string; compiles?: number } } | null;
+  const elapsedMs = running && task?.startedAt ? Date.now() - task.startedAt.getTime() : null;
   return {
     applicationId: app.id,
     status,
+    progress: running
+      ? {
+          stage: meta?.progress?.stage ?? "starting",
+          compiles: meta?.progress?.compiles ?? 0,
+          elapsedSeconds: elapsedMs === null ? null : Math.round(elapsedMs / 1000),
+          typicalTotalSeconds: RESUME_TYPICAL_SECONDS,
+          pollAfterSeconds: meta?.progress?.stage === "fitting" ? 10 : 15,
+        }
+      : null,
     task: task
       ? {
           status: task.status,

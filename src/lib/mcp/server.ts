@@ -1,4 +1,7 @@
 import { createHash } from "crypto";
+import { promises as fs } from "fs";
+import os from "os";
+import path from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -19,11 +22,21 @@ import { SOURCE_LABEL } from "../discovery/types";
 import { setLeadStatus } from "../discovery/leadStatus";
 import { getApplicationContext } from "./context";
 import { searchJobs, sourceSummary, loadApplicationIndex, type JobSearchFilters } from "./jobSearch";
-import { describeSalary, jdQuality } from "./jobIdentity";
-import { checkDuplicate, createDraft, getApplicationDetail, listApplications } from "./applications";
+import { describeSalary, jdExperienceRequirement, jdQuality } from "./jobIdentity";
+import { livenessChecker } from "../discovery/liveness";
+import { createShortLivedShareToken } from "../shareLink";
+import {
+  checkDuplicate,
+  createDraft,
+  getApplicationDetail,
+  listApplications,
+  setPendingQuestions,
+  updateApplicationDraft,
+} from "./applications";
 import { reviewFields } from "./formReview";
 import { readDeclarationDefaults } from "./declarations";
-import { playbook } from "./playbook";
+import { playbook, playbookProviderFromUrl } from "./playbook";
+import { saveCandidateAnswer } from "./savedAnswers";
 import {
   getApplicationEmail,
   getApplicationOtp,
@@ -56,6 +69,26 @@ const isoDate = z
   .refine((v) => !Number.isNaN(Date.parse(v)), "must be an ISO 8601 date-time");
 
 export class ToolTimeoutError extends Error {}
+
+export function isLoopback(baseUrl: string): boolean {
+  try {
+    const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "");
+    return host === "localhost" || host === "::1" || /^127\.\d+\.\d+\.\d+$/.test(host);
+  } catch {
+    return false;
+  }
+}
+
+/** Writes a resume under the OS temp dir for a same-machine agent's file input. */
+async function writeLocalResume(scope: string, filename: string, data: Buffer): Promise<string> {
+  const safeScope = scope.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) || "file";
+  const safeName = path.basename(filename).replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 120) || "resume.pdf";
+  const dir = path.join(os.tmpdir(), "yoloapply-resumes", safeScope);
+  await fs.mkdir(dir, { recursive: true });
+  const target = path.join(dir, safeName);
+  await fs.writeFile(target, data);
+  return target;
+}
 
 export async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -137,7 +170,7 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
       "YOLOapply tracks one candidate's job search. Use it to find jobs, read the candidate's truthful profile and saved answers, prepare resumes, track applications and read application emails.",
       "Employer forms are filled and submitted by the agent in a browser the candidate can watch; this server has no submit or send-email tool. Call get_browser_application_playbook before filling a form.",
       "Never record a submission without observed evidence. A click, a disconnect or an ambiguous page is an attempt: reconcile with search_application_emails before any retry.",
-      "Never invent candidate facts. Unknown answers go to the candidate.",
+      "Never invent candidate facts. Unknown answers go to the candidate: park the application with set_pending_questions and move on, and once they answer, save_candidate_answer with their own words so it is never asked again.",
     ].join(" "),
   });
 
@@ -216,13 +249,19 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
       description:
         "Resume-parsing-first procedure for filling an employer form in the collaborative browser, with ATS-specific notes and evidence rules for recording outcomes.",
       input: {
-        atsProvider: z.enum(["greenhouse", "lever", "ashby", "workday", "generic"]).optional(),
+        atsProvider: z
+          .enum(["greenhouse", "lever", "ashby", "workday", "eightfold", "turbohire", "generic"])
+          .optional()
+          .describe("Pass it when the form is an ATS hosted on the employer's own domain (common for Eightfold and TurboHire)."),
         url: z.string().url().max(2000).optional().describe("Application URL; used to detect the ATS."),
       },
       readOnly: true,
     },
     async ({ atsProvider, url: pageUrl }) =>
-      jsonResult("Playbook loaded.", playbook(atsProvider ?? (pageUrl ? detectAtsProvider(pageUrl) : undefined)))
+      jsonResult(
+        "Playbook loaded.",
+        playbook(atsProvider ?? (pageUrl ? playbookProviderFromUrl(pageUrl) ?? detectAtsProvider(pageUrl) : undefined))
+      )
   );
 
   tool(
@@ -277,7 +316,7 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
     excludeRoleKeywords: z.array(shortText(80)).max(30).optional(),
     companies: z.array(shortText(120)).max(20).optional(),
     jobType: shortText(40).optional().describe('e.g. "Full Time", "Internship".'),
-    maxYearsExperience: z.number().min(0).max(30).optional().describe("Keep jobs whose stated minimum experience is at most this. Unstated experience is kept unless requireKnownExperience."),
+    maxYearsExperience: z.number().min(0).max(30).optional().describe("Keep jobs whose stated minimum experience (listing field or description, whichever is higher) is at most this. Unstated experience is kept unless requireKnownExperience."),
     requireKnownExperience: z.boolean().default(false),
     minScore: z.number().int().min(0).max(100).optional().describe("Minimum fit score. Unscored jobs are excluded when set."),
     postedWithinDays: z.number().int().min(1).max(365).optional().describe("Window on posted date, falling back to first-seen date for undated listings."),
@@ -291,10 +330,14 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
     {
       title: "Search jobs",
       description:
-        "Page through the whole shared job catalog with stable cursors (no 500-row cap; undated listings ordered by first-seen date and marked dateBasis=discovered). Returns compact summaries with fit score, provenance and duplicate status. Salary is listing text only, never verified. Use get_job for the full description.",
+        "Page through the whole shared job catalog with stable cursors (no 500-row cap; undated listings ordered by first-seen date and marked dateBasis=discovered). Returns compact summaries with fit score, provenance, duplicate status and liveness. maxYearsExperience checks the listing field AND the full description (the stricter minimum wins; experienceFromDescription quotes the sentence). Salary is listing text only, never verified. Use get_job for the full description.",
       input: {
         ...searchFilters,
-        limit: z.number().int().min(1).max(50).default(20),
+        verifyLive: z
+          .boolean()
+          .default(true)
+          .describe("Ask Greenhouse/Lever/Ashby whether each result is still listed. Closed postings are skipped and marked unavailable for the candidate; other boards report liveness unknown."),
+        limit: z.number().int().min(1).max(50).default(20).describe("1-50 per page; page with nextCursor for more."),
         cursor: z.string().max(500).optional().describe("nextCursor from the previous page; filters must be identical."),
       },
       readOnly: true,
@@ -325,15 +368,16 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
     {
       title: "Job detail",
       description:
-        "Full catalog record for one job: description, provenance (sources, first seen, last updated), salary disclosure, the candidate's fit score and duplicate matches. refreshLive=true re-fetches the live posting first (may use the candidate's LLM key; updates the shared catalog).",
-      input: { jobId: id, refreshLive: z.boolean().default(false) },
+        "Full catalog record for one job: description, provenance (sources, first seen, last updated), experience requirement (listing field and description), salary disclosure, liveness, the candidate's fit score and duplicate matches. checkLive (default true) asks Greenhouse/Lever/Ashby whether the posting is still listed; a closed one is marked unavailable for the candidate. refreshLive=true re-fetches the live posting text first (may use the candidate's LLM key; updates the shared catalog).",
+      input: { jobId: id, refreshLive: z.boolean().default(false), checkLive: z.boolean().default(true) },
       readOnly: false,
       openWorld: true,
       timeoutMs: 90_000,
     },
-    async ({ jobId, refreshLive }) => {
+    async ({ jobId, refreshLive, checkLive }) => {
       let lead = await prisma.jobLead.findUnique({ where: { id: jobId } });
       if (!lead) throw new ApiUserError("Job not found.", 404, "not_found");
+      const liveness = checkLive ? await livenessChecker(15_000)(lead) : null;
       let live: { refreshed: boolean; at?: string; error?: string } = { refreshed: false };
       if (refreshLive) {
         try {
@@ -344,13 +388,20 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
           live = { refreshed: false, error: err.error };
         }
       }
-      const [overlay, index] = await Promise.all([
+      const [initialOverlay, index] = await Promise.all([
         prisma.userLead.findUnique({
           where: { userId_jobLeadId: { userId: ctx.userId, jobLeadId: lead.id } },
           select: { status: true, score: true, scoreReason: true, applicationId: true },
         }),
         loadApplicationIndex(ctx.userId),
       ]);
+      let overlay = initialOverlay;
+      // The ATS says it's gone: record that for the candidate, unless they
+      // already acted on it (promoted or dismissed).
+      if (liveness?.status === "closed" && (!overlay || overlay.status === "new")) {
+        const updated = await setLeadStatus(ctx.userId, lead.id, "closed");
+        overlay = { status: updated.status, score: updated.score, scoreReason: updated.scoreReason, applicationId: updated.applicationId };
+      }
       const jd = lead.jdText ?? "";
       return jsonResult(`${lead.role} at ${lead.company}.`, {
         jobId: lead.id,
@@ -376,6 +427,8 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
           dateBasis: lead.postedAt ? "posted" : "discovered",
           liveRefresh: live,
         },
+        experienceRequirement: { listed: lead.experience, fromDescription: jdExperienceRequirement(jd) },
+        liveness,
         description: { quality: jdQuality(jd), length: jd.length, text: jd.slice(0, 40_000), truncated: jd.length > 40_000 },
         fit: overlay?.score != null ? { score: overlay.score, reason: overlay.scoreReason } : null,
         tracking: {
@@ -454,17 +507,23 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
     "list_applications",
     {
       title: "List applications",
-      description: "Tracked applications, newest first, with status and submissionState (confirmed, unconfirmed_attempt, marked_applied_without_evidence, not_submitted). Cursor-paginated.",
+      description:
+        "Tracked applications, newest first, with status, submissionState (confirmed, unconfirmed_attempt, marked_applied_without_evidence, not_submitted) and pendingQuestions. activitySince lists what a session touched (created, edited or any event since); needsInput lists applications parked on candidate questions. Cursor-paginated.",
       input: {
         statuses: z.array(z.enum(["draft", "personalized", "applied", "replied", "interview", "offer", "rejected", "closed"])).max(8).optional(),
         company: shortText(200).optional(),
-        limit: z.number().int().min(1).max(100).default(25),
+        activitySince: isoDate.optional().describe("Only applications created, edited or with any event at or after this time, e.g. when this session started."),
+        needsInput: z.boolean().default(false).describe("Only applications with open pendingQuestions (a page can then hold fewer than limit rows)."),
+        limit: z.number().int().min(1).max(100).default(25).describe("1-100 per page."),
         cursor: z.string().max(500).optional(),
       },
       readOnly: true,
     },
     async (args) => {
-      const result = await listApplications(ctx.userId, args);
+      const result = await listApplications(ctx.userId, {
+        ...args,
+        activitySince: args.activitySince ? new Date(args.activitySince) : undefined,
+      });
       return jsonResult(`${result.applications.length} applications.`, result);
     }
   );
@@ -514,6 +573,79 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
         result.created ? "Draft created." : result.deduplicated ? "Already tracked; existing application returned." : "Not created: possible duplicate.",
         result
       );
+    }
+  );
+
+  tool(
+    "update_application_draft",
+    {
+      title: "Correct an unsubmitted application",
+      description:
+        "Fix a draft or personalized application when the live posting differs from what was tracked: company, role (title), location, jdUrl, applyUrl or the job description. Refused once the application is applied or later. Changing company, role or description marks an existing resume stale (call prepare_resume again). Records what changed and why.",
+      input: {
+        applicationId: id,
+        company: shortText(200).optional(),
+        role: shortText(200).optional(),
+        location: z.string().trim().max(300).optional(),
+        jdUrl: z.string().url().max(2000).optional(),
+        applyUrl: z.string().url().max(2000).optional(),
+        jobDescription: z.string().trim().max(50_000).optional(),
+        reason: shortText(300).describe("Why, e.g. 'live title is Member of Technical Staff, Backend'."),
+      },
+      readOnly: false,
+    },
+    async ({ applicationId, ...patch }) => {
+      const result = await updateApplicationDraft(ctx.userId, applicationId, patch);
+      return jsonResult(result.changed ? `Updated: ${result.changes.join("; ")}.` : "Nothing to change.", result);
+    }
+  );
+
+  tool(
+    "set_pending_questions",
+    {
+      title: "Park an application on candidate questions",
+      description:
+        "Record the questions only the candidate can answer for this application (label, why it is needed, the form's options) so it can wait while you continue with other jobs; list_applications needsInput=true and get_application show them. Call again with an empty list once they are answered. Does not contact the employer.",
+      input: {
+        applicationId: id,
+        questions: z
+          .array(
+            z.object({
+              label: shortText(300),
+              why: z.string().trim().max(300).optional(),
+              options: z.array(z.string().max(200)).max(50).optional(),
+              required: z.boolean().optional(),
+            })
+          )
+          .max(20),
+      },
+      readOnly: false,
+    },
+    async ({ applicationId, questions }) => {
+      const result = await setPendingQuestions(ctx.userId, applicationId, questions);
+      return jsonResult(questions.length ? `${questions.length} question(s) pending.` : "No open questions.", result);
+    }
+  );
+
+  tool(
+    "save_candidate_answer",
+    {
+      title: "Save an answer the candidate gave",
+      description:
+        "Remember an answer the candidate gave you in this conversation (notice period, current/expected salary, postal address, a recurring screening question) so review_form_fields and later applications use it instead of asking again. candidateStatement must be the candidate's own words; never save something you inferred. key: a camelCase name; the well-known keys noticePeriod, currentLocation, willingToRelocate, workAuthorization, sponsorship also update the matching Settings field, and currentSalary, expectedSalary, postalAddress, postalCode and country are used by review_form_fields' standard fields. fieldLabels: the form labels this answers. company: only for answers specific to one employer. The candidate can review and remove saved answers in Settings -> Profile.",
+      input: {
+        key: z.string().trim().max(60).optional(),
+        question: shortText(300),
+        answer: shortText(2000),
+        fieldLabels: z.array(shortText(300)).max(10).optional(),
+        company: shortText(200).optional(),
+        candidateStatement: shortText(1000).describe("What the candidate said, verbatim."),
+      },
+      readOnly: false,
+    },
+    async (args) => {
+      const result = await saveCandidateAnswer(ctx.userId, args);
+      return jsonResult(`${result.replaced ? "Updated" : "Saved"} answer "${result.key}".`, result);
     }
   );
 
@@ -655,7 +787,8 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
     "get_resume_status",
     {
       title: "Resume status",
-      description: "idle | running | completed | failed, with the generation task, attempt count and stored file metadata.",
+      description:
+        "idle | running | completed | failed, with the generation task, attempt count and stored file metadata. While running, progress gives the stage (tailoring, then fitting with a compile count), elapsed seconds, the typical total (30-75 s) and when to poll next.",
       input: { applicationId: id },
       readOnly: true,
     },
@@ -679,16 +812,23 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
     {
       title: "Download resume bytes",
       description:
-        "Base64 chunk of a resume file: the tailored PDF/TeX for an application, or the generic uploaded resume when applicationId is omitted. Read in chunks with offset until nextOffset is null; verify the sha256 of the assembled bytes.",
+        "A resume file: the tailored PDF/TeX for an application, or the generic uploaded resume when applicationId is omitted. delivery=local_file (only when this server runs on the agent's machine, i.e. a localhost URL) writes the file to a temp path you can hand straight to a browser file input. delivery=base64 returns chunks: read with offset until nextOffset is null and verify the sha256. For an application PDF, downloadUrl is a 15-minute link that needs no auth header.",
       input: {
         applicationId: id.optional(),
         format: z.enum(["pdf", "tex"]).default("pdf"),
+        delivery: z.enum(["base64", "local_file"]).default("base64"),
         offset: z.number().int().min(0).default(0),
-        maxBytes: z.number().int().min(1024).max(MAX_FILE_CHUNK).default(MAX_FILE_CHUNK),
+        maxBytes: z
+          .number()
+          .int()
+          .min(1024)
+          .max(MAX_FILE_CHUNK)
+          .default(MAX_FILE_CHUNK)
+          .describe(`Chunk size for delivery=base64, ${1024}-${MAX_FILE_CHUNK} bytes.`),
       },
       readOnly: true,
     },
-    async ({ applicationId, format, offset, maxBytes }) => {
+    async ({ applicationId, format, delivery, offset, maxBytes }) => {
       let data: Buffer | null = null;
       let filename = "";
       let updatedAt: Date | null = null;
@@ -708,6 +848,33 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
         filename = file.meta.filename;
         updatedAt = file.meta.updatedAt;
       }
+      const sha256 = createHash("sha256").update(data).digest("hex");
+      const downloadUrl =
+        applicationId && format === "pdf"
+          ? (() => {
+              const share = createShortLivedShareToken(ctx.userId, applicationId, 15);
+              return { url: url(`/api/share/${share.token}/file?download=1`), expiresAt: share.expiresAt.toISOString() };
+            })()
+          : null;
+      if (delivery === "local_file") {
+        if (!isLoopback(ctx.baseUrl)) {
+          throw new ApiUserError(
+            "local_file only works when this MCP server runs on your machine (a localhost URL). Use downloadUrl or delivery=base64.",
+            400,
+            "local_file_unavailable"
+          );
+        }
+        const localPath = await writeLocalResume(applicationId ?? "generic", filename, data);
+        return jsonResult(`Saved ${data.length} bytes to ${localPath}.`, {
+          filename,
+          mimeType: format === "tex" ? "text/x-tex" : "application/pdf",
+          totalBytes: data.length,
+          sha256,
+          updatedAt,
+          localPath,
+          downloadUrl,
+        });
+      }
       if (offset > data.length) throw new ApiUserError("offset is past the end of the file.", 400, "invalid_offset");
       const chunk = data.subarray(offset, offset + maxBytes);
       const next = offset + chunk.length < data.length ? offset + chunk.length : null;
@@ -715,8 +882,9 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
         filename,
         mimeType: format === "tex" ? "text/x-tex" : "application/pdf",
         totalBytes: data.length,
-        sha256: createHash("sha256").update(data).digest("hex"),
+        sha256,
         updatedAt,
+        downloadUrl,
         offset,
         bytes: chunk.length,
         nextOffset: next,
@@ -802,7 +970,7 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
     {
       title: "Get verification code for an active application",
       description:
-        "Return the verification code an employer/ATS just emailed for ONE application that is still being submitted. requestedAt = when you triggered the code. Only codes received after that (max 30 min), addressed to the candidate, from the employer or its ATS, naming the employer, with exactly one code. Refuses account-recovery/bank codes, ambiguous codes and codes already used for another application.",
+        "Return the verification code an employer/ATS just emailed for ONE application that is still being submitted. requestedAt = when you triggered the code. Only codes received from 60 s before requestedAt (mailbox and agent clocks can differ by that much) up to now, at most maxAgeMinutes old, addressed to the candidate, from the employer or its ATS, naming the employer (its legal name or core name, e.g. Qualcomm for Qualcomm India Private Limited, in the subject, sender name or body), with exactly one code. Codes filed as Junk are included. Refuses account-recovery/bank codes, ambiguous codes and codes already used for another application. On kind=none, the rejected list says why each candidate message was refused.",
       input: {
         applicationId: id,
         requestedAt: isoDate,
@@ -839,6 +1007,9 @@ export const TOOL_NAMES = [
   "list_applications",
   "get_application",
   "create_application_draft",
+  "update_application_draft",
+  "set_pending_questions",
+  "save_candidate_answer",
   "record_application_attempt",
   "record_confirmed_submission",
   "prepare_resume",
