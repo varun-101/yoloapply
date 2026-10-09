@@ -65,6 +65,14 @@ export async function createDraft(
       const owned = await prisma.application.findFirst({ where: { id: overlay.applicationId, userId }, select: { id: true, status: true } });
       if (owned) return { created: false, deduplicated: true, applicationId: owned.id, status: owned.status, reason: "already_promoted" };
     }
+    if (overlay?.status === "closed") {
+      return {
+        created: false,
+        deduplicated: false,
+        reason: "job_unavailable",
+        hint: "This job is marked no longer available. If the candidate confirms the posting is open again, call set_job_availability with available=true first.",
+      };
+    }
     const verdict = decide(index.match({ urls: [lead.url, lead.canonicalUrl], company: lead.company, role: lead.role }));
     if (verdict && "existing" in verdict && verdict.existing) {
       return { created: false, deduplicated: true, applicationId: verdict.existing.applicationId, status: verdict.existing.status, reason: verdict.existing.reason };

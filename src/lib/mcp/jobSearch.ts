@@ -19,7 +19,7 @@ import {
 // ordering is stable while the catalog grows.
 
 export interface JobSearchFilters {
-  status: "new" | "dismissed" | "promoted" | "any";
+  status: "new" | "dismissed" | "closed" | "promoted" | "any";
   sources?: string[];
   locations?: string[];
   includeUnknownLocation: boolean;

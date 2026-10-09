@@ -10,6 +10,8 @@ import { TOOL_NAMES, isReceiptFor } from "@/lib/mcp/server";
 import { getMicrosoftAccessToken } from "@/lib/microsoft/oauth";
 import { getApplicationOtp, getApplicationEmail, searchApplicationEmails, type GraphFetch } from "@/lib/mcp/mail/service";
 import { PATCH as patchApplication } from "@/app/api/applications/[id]/route";
+import { PATCH as patchLead } from "@/app/api/discovery/leads/[id]/route";
+import { GET as listLeads } from "@/app/api/discovery/leads/route";
 
 // Integration tests on the disposable database: the real HTTP handler, the
 // real SDK client over an in-process fetch, real Prisma queries.
@@ -279,6 +281,77 @@ describe("search_jobs", () => {
     );
     expect(summary.sources.reduce((n, s) => n + s.total, 0)).toBeGreaterThanOrEqual(131);
     await c.close();
+  });
+});
+
+describe("job availability", () => {
+  type Page = { jobs: { jobId: string; tracking: { overlayStatus: string } }[] };
+  const search = async (c: Client, extra: Record<string, unknown> = {}) =>
+    structured<Page>(await c.callTool({ name: "search_jobs", arguments: { companies: ["Closing Co"], limit: 10, ...extra } })).jobs;
+
+  it("hides a closed job for that candidate only, refuses drafts, and reopens it", async () => {
+    const lead = await prisma.jobLead.create({
+      data: { source: "greenhouse", externalId: "closing-1", company: "Closing Co", role: "Platform Engineer", url: "https://closing.example/1", postedAt: new Date() },
+    });
+    const ca = await client(tokenA);
+    const cb = await client(tokenB);
+    const marked = structured<{ overlayStatus: string; changed: boolean }>(
+      await ca.callTool({ name: "set_job_availability", arguments: { jobId: lead.id, available: false, evidence: "Page says: this job is no longer accepting applications" } })
+    );
+    expect(marked).toMatchObject({ overlayStatus: "closed", changed: true });
+    expect(await search(ca)).toHaveLength(0);
+    expect((await search(ca, { status: "closed" })).map((j) => j.jobId)).toEqual([lead.id]);
+    expect(await search(cb)).toHaveLength(1); // per-candidate: B still sees it
+    const draft = structured<{ created: boolean; reason: string }>(await ca.callTool({ name: "create_application_draft", arguments: { jobId: lead.id } }));
+    expect(draft).toMatchObject({ created: false, reason: "job_unavailable" });
+
+    const reopened = structured<{ overlayStatus: string; changed: boolean }>(
+      await ca.callTool({ name: "set_job_availability", arguments: { jobId: lead.id, available: true } })
+    );
+    expect(reopened).toMatchObject({ overlayStatus: "new", changed: true });
+    expect(await search(ca)).toHaveLength(1);
+    await ca.close();
+    await cb.close();
+  });
+
+  it("never undoes a dismissal, refuses promoted and unknown jobs", async () => {
+    const [dismissed, promoted] = await Promise.all(
+      ["closing-2", "closing-3"].map((externalId) =>
+        prisma.jobLead.create({ data: { source: "lever", externalId, company: "Closing Co", role: `Role ${externalId}`, postedAt: new Date() } })
+      )
+    );
+    await prisma.userLead.create({ data: { userId: userA, jobLeadId: dismissed.id, status: "dismissed" } });
+    await prisma.userLead.create({ data: { userId: userA, jobLeadId: promoted.id, status: "promoted", applicationId: appA } });
+    const c = await client(tokenA);
+    const kept = structured<{ overlayStatus: string; changed: boolean }>(
+      await c.callTool({ name: "set_job_availability", arguments: { jobId: dismissed.id, available: true } })
+    );
+    expect(kept).toMatchObject({ overlayStatus: "dismissed", changed: false });
+    expect(errorCode(await c.callTool({ name: "set_job_availability", arguments: { jobId: promoted.id, available: false } }))).toBe("already_promoted");
+    expect(errorCode(await c.callTool({ name: "set_job_availability", arguments: { jobId: "missing-job", available: false } }))).toBe("not_found");
+    await c.close();
+  });
+
+  it("Discover routes mark a job no longer available and restore it", async () => {
+    const lead = await prisma.jobLead.create({
+      data: { source: "sheet", externalId: "closing-4", company: "Closing Web Co", role: "SDE", postedAt: new Date() },
+    });
+    const auth = { authorization: `Bearer ${tokenA}`, "content-type": "application/json" };
+    const patch = (status: string) =>
+      patchLead(new NextRequest(`${BASE}/api/discovery/leads/${lead.id}`, { method: "PATCH", headers: auth, body: JSON.stringify({ status }) }), {
+        params: { id: lead.id },
+      });
+    const ids = async (status: string) =>
+      ((await (await listLeads(new NextRequest(`${BASE}/api/discovery/leads?status=${status}`, { headers: auth }))).json()) as { id: string; status: string }[])
+        .filter((l) => l.id === lead.id)
+        .map((l) => l.status);
+    expect(await ids("new")).toEqual(["new"]);
+    expect((await patch("closed")).status).toBe(200);
+    expect(await ids("new")).toEqual([]);
+    expect(await ids("closed")).toEqual(["closed"]);
+    expect((await patch("promoted")).status).toBe(400);
+    expect((await patch("new")).status).toBe(200);
+    expect(await ids("new")).toEqual(["new"]);
   });
 });
 

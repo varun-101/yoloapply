@@ -45,7 +45,7 @@ function loadLeads() {
   });
 }
 
-const statusRank = (s: string) => (s === "promoted" ? 3 : s === "dismissed" ? 2 : 1);
+const statusRank = (s: string) => (s === "promoted" ? 3 : s === "dismissed" || s === "closed" ? 2 : 1);
 
 // The date a posting is reckoned by for the repost window: posting date when
 // known, else the date we found it.

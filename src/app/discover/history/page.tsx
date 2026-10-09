@@ -248,6 +248,8 @@ export default function ScanHistoryPage() {
                                 </Button>
                               ) : l.status === "dismissed" ? (
                                 <span className="text-xs text-slate-400 dark:text-slate-500">dismissed</span>
+                              ) : l.status === "closed" ? (
+                                <span className="text-xs text-slate-400 dark:text-slate-500">no longer available</span>
                               ) : null}
                               {l.url && (
                                 <a

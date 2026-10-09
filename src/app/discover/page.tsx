@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SOURCE_LABEL } from "@/lib/discovery/types";
-import { CheckCircle2, ExternalLink, FileSearch, Gauge, History, Loader2, Mail, RadarIcon, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { Ban, CheckCircle2, ExternalLink, FileSearch, Gauge, History, Loader2, Mail, RadarIcon, Search, SlidersHorizontal, Sparkles, Undo2, X } from "lucide-react";
 
 interface Lead {
   id: string;
@@ -418,17 +418,23 @@ export default function DiscoverPage() {
     }
   }
 
-  async function dismiss(lead: Lead) {
+  // Dismiss, mark no longer available, or restore to "new". The lead leaves the
+  // current list unless it still matches the filter ("all", or restoring into "new").
+  async function setLeadStatus(lead: Lead, next: "dismissed" | "closed" | "new") {
     setBusyLead(lead.id);
     setErr(null);
     try {
       const res = await fetch(`/api/discovery/leads/${lead.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "dismissed" }),
+        body: JSON.stringify({ status: next }),
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? "Dismiss failed");
-      setLeads((ls) => (ls ?? []).filter((l) => l.id !== lead.id || status === "all"));
+      if (!res.ok) throw new Error((await res.json()).error ?? "Update failed");
+      setLeads((ls) =>
+        status === "all" || status === next
+          ? (ls ?? []).map((l) => (l.id === lead.id ? { ...l, status: next } : l))
+          : (ls ?? []).filter((l) => l.id !== lead.id)
+      );
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -651,6 +657,7 @@ export default function DiscoverPage() {
           <option value="new">New</option>
           <option value="promoted">Promoted</option>
           <option value="dismissed">Dismissed</option>
+          <option value="closed">No longer available</option>
           <option value="all">All</option>
         </select>
         <select className={SELECT_CLS} value={source} onChange={(e) => setSource(e.target.value)}>
@@ -768,7 +775,7 @@ export default function DiscoverPage() {
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 md:shrink-0 md:flex-nowrap">
-                    {lead.contactEmail && lead.status !== "dismissed" && (
+                    {lead.contactEmail && lead.status !== "dismissed" && lead.status !== "closed" && (
                       <Button asChild size="sm" variant="outline" className="w-full md:w-auto" title={`Cold email ${lead.contactEmail}`}>
                         <Link
                           href={`/cold-email?company=${encodeURIComponent(lead.company)}&role=${encodeURIComponent(lead.role)}&email=${encodeURIComponent(lead.contactEmail)}${lead.applicationId ? `&applicationId=${lead.applicationId}` : ""}`}
@@ -783,8 +790,23 @@ export default function DiscoverPage() {
                           <CheckCircle2 className="h-4 w-4" /> View application
                         </Link>
                       </Button>
-                    ) : lead.status === "dismissed" ? (
-                      <Badge className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">dismissed</Badge>
+                    ) : lead.status === "dismissed" || lead.status === "closed" ? (
+                      <>
+                        <Badge className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                          {lead.status === "closed" ? "no longer available" : "dismissed"}
+                        </Badge>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="flex-1 md:flex-none"
+                          onClick={() => setLeadStatus(lead, "new")}
+                          disabled={busyLead === lead.id}
+                          title="Move back to New"
+                        >
+                          {busyLead === lead.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
+                          Restore
+                        </Button>
+                      </>
                     ) : (
                       <>
                         {lead.jdText ? (
@@ -831,9 +853,21 @@ export default function DiscoverPage() {
                           size="sm"
                           variant="ghost"
                           className="shrink-0"
-                          onClick={() => dismiss(lead)}
+                          onClick={() => setLeadStatus(lead, "closed")}
+                          disabled={busyLead === lead.id}
+                          title="No longer available"
+                          aria-label="Mark as no longer available"
+                        >
+                          <Ban className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="shrink-0"
+                          onClick={() => setLeadStatus(lead, "dismissed")}
                           disabled={busyLead === lead.id}
                           title="Dismiss"
+                          aria-label="Dismiss"
                         >
                           <X className="h-4 w-4" />
                         </Button>

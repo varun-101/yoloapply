@@ -60,6 +60,7 @@ Generating a new token in Settings replaces the old one, which also disconnects 
 | Discovery | `search_jobs` | Keyset cursor over `COALESCE(postedAt, firstSeenAt)`; filters for source, location, title, company, job type, max experience, min fit score, recency, description presence; excludes or flags tracked applications by canonical URL, ATS posting id and company+title. |
 | | `get_job_source_summary` | Per-source totals, undated and scored counts. |
 | | `get_job` | Full description, provenance, salary disclosure (`verified` is always false), optional live refresh. |
+| | `set_job_availability` | Marks a catalog job no longer available (`available=false`, overlay status `closed`) or undoes that. Per-candidate, like dismissing in Discover: closed jobs leave the default `search_jobs` results (`status: "closed"` lists them), the Discover feed and fit scoring, and `create_application_draft` refuses them with `job_unavailable`. Refused for jobs already promoted to an application; `available=true` never undoes a dismissal. |
 | Tracking | `check_duplicate_application`, `list_applications`, `get_application` | `submissionState`: confirmed, unconfirmed_attempt, marked_applied_without_evidence, not_submitted. |
 | | `create_application_draft` | From a catalog job or URL; deduplicates. |
 | | `record_application_attempt` | Never marks applied. `submit_clicked` + `unknown` flags the application for receipt reconciliation. |

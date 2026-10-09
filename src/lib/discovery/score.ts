@@ -4,6 +4,7 @@ import { getProjectBank, ProjectBankItem } from "../projectBank";
 import { getLlmConfigOrNull } from "../credentials";
 import { ensureSearchPrefs } from "../searchPrefs";
 import { prisma } from "../db";
+import { ACTED_LEAD_STATUSES } from "./leadStatus";
 
 // LLM fit-scoring against the shared catalog, per user with the user's own
 // DeepSeek key and profile. Each scored posting lands in that user's UserLead
@@ -149,7 +150,7 @@ export async function scoreNewLeads(
       userLeads: {
         none: {
           userId,
-          OR: [{ score: { not: null } }, { status: { in: ["promoted", "dismissed"] } }],
+          OR: [{ score: { not: null } }, { status: { in: ACTED_LEAD_STATUSES } }],
         },
       },
     },

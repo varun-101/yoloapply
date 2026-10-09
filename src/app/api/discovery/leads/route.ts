@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { sourceTier } from "@/lib/discovery/types";
+import { ACTED_LEAD_STATUSES } from "@/lib/discovery/leadStatus";
 import { requireUser, apiError } from "@/lib/auth";
 
 export type LeadSort = "trust" | "newest" | "oldest" | "score" | "company";
@@ -48,11 +49,11 @@ export async function GET(req: NextRequest) {
     // that run scored for this user; otherwise filter by the user's status.
     if (scanRunId) {
       where.userLeads = { some: { userId: user.id, scanRunId } };
-    } else if (status === "promoted" || status === "dismissed") {
+    } else if ((ACTED_LEAD_STATUSES as string[]).includes(status)) {
       where.userLeads = { some: { userId: user.id, status } };
     } else if (status === "new") {
-      // "new" = catalog rows the user hasn't promoted or dismissed.
-      where.userLeads = { none: { userId: user.id, status: { in: ["promoted", "dismissed"] } } };
+      // "new" = catalog rows the user hasn't promoted, dismissed or marked closed.
+      where.userLeads = { none: { userId: user.id, status: { in: ACTED_LEAD_STATUSES } } };
     } // status === "all" → no overlay filter
 
     const rows = await prisma.jobLead.findMany({

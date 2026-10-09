@@ -600,7 +600,7 @@ model UserLead {
   jobLeadId String
   jobLead   JobLead @relation(fields: [jobLeadId], references: [id], onDelete: Cascade)
 
-  status        String   @default("new") // new | promoted | dismissed
+  status        String   @default("new") // new | promoted | dismissed | closed (no longer available); see src/lib/discovery/leadStatus.ts
   applicationId String? // set on promote
   score         Int? // LLM fit score 0-100 (this user's key/profile)
   scoreReason   String?

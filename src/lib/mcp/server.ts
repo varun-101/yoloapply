@@ -16,6 +16,7 @@ import {
 import { getResumeStatus, startResumeGeneration } from "../application-agent/resumeJob";
 import { refreshLeadJd } from "../discovery/leadJd";
 import { SOURCE_LABEL } from "../discovery/types";
+import { setLeadStatus } from "../discovery/leadStatus";
 import { getApplicationContext } from "./context";
 import { searchJobs, sourceSummary, loadApplicationIndex, type JobSearchFilters } from "./jobSearch";
 import { describeSalary, jdQuality } from "./jobIdentity";
@@ -265,7 +266,10 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
   // ── Discovery ───────────────────────────────────────────────────────────
 
   const searchFilters = {
-    status: z.enum(["new", "dismissed", "promoted", "any"]).default("new").describe("Discover overlay state. new = not promoted or dismissed."),
+    status: z
+      .enum(["new", "dismissed", "closed", "promoted", "any"])
+      .default("new")
+      .describe("Discover overlay state. new = not promoted, dismissed or closed. closed = marked no longer available."),
     sources: z.array(shortText(40)).max(12).optional().describe(`Source ids: ${Object.keys(SOURCE_LABEL).join(", ")}.`),
     locations: z.array(shortText(80)).max(20).optional().describe("Any-of, case-insensitive substring of the listing location, e.g. Pune, Bengaluru, Remote."),
     includeUnknownLocation: z.boolean().default(false),
@@ -379,6 +383,50 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
           applicationId: overlay?.applicationId ?? null,
           duplicates: index.match({ urls: [lead.url, lead.canonicalUrl], company: lead.company, role: lead.role }),
         },
+      });
+    }
+  );
+
+  tool(
+    "set_job_availability",
+    {
+      title: "Mark a job unavailable or available",
+      description:
+        "Record that a catalog job is no longer available (available=false: the posting is closed, removed or no longer accepting applications) so it drops out of search_jobs and the candidate's Discover feed, or undo that (available=true). Only for jobs not yet promoted to an application; for a tracked application, its status is the record. Affects only this candidate. Mark unavailable only on what you observed on the live posting or what the candidate said, never on a guess.",
+      input: {
+        jobId: id,
+        available: z.boolean(),
+        evidence: z.string().trim().max(500).optional().describe("What showed it was closed, e.g. the page text or HTTP status. Echoed back for the record."),
+      },
+      readOnly: false,
+    },
+    async ({ jobId, available, evidence }) => {
+      if (available) {
+        // Only undo a "closed" mark; a dismissal is the candidate's call, not an availability fact.
+        const overlay = await prisma.userLead.findUnique({
+          where: { userId_jobLeadId: { userId: ctx.userId, jobLeadId: jobId } },
+          select: { status: true },
+        });
+        if (overlay && overlay.status !== "closed") {
+          return jsonResult(`Job was not marked unavailable (status ${overlay.status}); nothing changed.`, {
+            jobId,
+            overlayStatus: overlay.status,
+            changed: false,
+          });
+        }
+        if (!overlay) {
+          if (!(await prisma.jobLead.findUnique({ where: { id: jobId }, select: { id: true } }))) {
+            throw new ApiUserError("Job not found.", 404, "not_found");
+          }
+          return jsonResult("Job is already available; nothing changed.", { jobId, overlayStatus: "new", changed: false });
+        }
+      }
+      const updated = await setLeadStatus(ctx.userId, jobId, available ? "new" : "closed");
+      return jsonResult(available ? "Job marked available again." : "Job marked no longer available.", {
+        jobId,
+        overlayStatus: updated.status,
+        changed: true,
+        evidence: evidence ?? null,
       });
     }
   );
@@ -786,6 +834,7 @@ export const TOOL_NAMES = [
   "search_jobs",
   "get_job_source_summary",
   "get_job",
+  "set_job_availability",
   "check_duplicate_application",
   "list_applications",
   "get_application",

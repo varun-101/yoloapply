@@ -5,7 +5,7 @@
 
 export const GENERAL_STEPS = [
   "1. Before opening the form: get_application_context (with the company) and check_duplicate_application. Stop if a confirmed submission already exists.",
-  "2. Read the LIVE job description (get_job with refreshLive, or the page itself). Cached text can be headings only; listing salary is never verified.",
+  "2. Read the LIVE job description (get_job with refreshLive, or the page itself). Cached text can be headings only; listing salary is never verified. If the posting is closed, removed or no longer accepting applications, stop and, for a catalog job, call set_job_availability with available=false and what you saw as evidence.",
   "3. prepare_resume, then poll get_resume_status until completed. Download with get_resume_file and check it is one page and every fact is in the saved profile/projects.",
   "4. Upload the resume FIRST and wait until the site has finished parsing it (spinner gone, fields populated, upload shown as complete). Record record_application_attempt stage=resume_parsed.",
   "5. Read back every field the parser touched or left empty. Pass them to review_form_fields with displayedValue and, when verified, persistedValue. Correct ONLY fields it marks fill/correct; leave correct parser output alone.",
