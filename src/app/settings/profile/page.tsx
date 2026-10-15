@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Textarea } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Loader2, Plus, Save, Trash2 } from "lucide-react";
+import ExportPackButton from "@/components/export-pack-button";
 
 interface Education {
   degree: string;
@@ -179,6 +180,17 @@ export default function ProfileSettings() {
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Take your data anywhere: export your profile and projects as an interview prep pack.
+        </p>
+        <ExportPackButton
+          endpoint="/api/export/profile"
+          label="Export prep pack"
+          zipHint="Adds your generic resume PDF if uploaded"
+        />
+      </div>
+
       {err && (
         <div className="rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950 px-3 py-2 text-sm text-rose-800 dark:text-rose-300">
           {err}
