@@ -604,6 +604,7 @@ model UserLead {
   applicationId String? // set on promote
   score         Int? // LLM fit score 0-100 (this user's key/profile)
   scoreReason   String?
+  favoritedAt   DateTime? // starred in Discover; independent of status, so it survives promote/dismiss
   scanRunId     String? // the user scan that scored/surfaced it for them
   scanRun       ScanRun? @relation(fields: [scanRunId], references: [id], onDelete: SetNull)
   createdAt     DateTime @default(now())

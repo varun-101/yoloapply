@@ -23,6 +23,8 @@ import {
 
 export interface JobSearchFilters {
   status: "new" | "dismissed" | "closed" | "promoted" | "any";
+  /** Only jobs the candidate starred in Discover. */
+  favoritesOnly?: boolean;
   sources?: string[];
   locations?: string[];
   includeUnknownLocation: boolean;
@@ -79,6 +81,7 @@ interface Row {
   score: number | null;
   scoreReason: string | null;
   applicationId: string | null;
+  favoritedAt: Date | null;
 }
 
 const LIVE_CHECK_BUDGET_MS = 20_000;
@@ -135,6 +138,7 @@ function whereClauses(f: JobSearchFilters, excludeUrls: string[]): Prisma.Sql[] 
   const w: Prisma.Sql[] = [];
   if (f.status === "new") w.push(Prisma.sql`(ul.status IS NULL OR ul.status = 'new')`);
   else if (f.status !== "any") w.push(Prisma.sql`ul.status = ${f.status}`);
+  if (f.favoritesOnly) w.push(Prisma.sql`ul."favoritedAt" IS NOT NULL`);
 
   if (f.sources?.length) {
     const parts = f.sources.map(
@@ -196,7 +200,7 @@ async function fetchBatch(
            jl."updatedAt", COALESCE(jl."postedAt", jl."createdAt") AS "effectiveAt",
            length(jl."jdText")::int AS "jdLength", left(jl."jdText", 1200) AS "jdHead",
            ${f.maxYearsExperience !== undefined ? Prisma.sql`jl."jdText"` : Prisma.sql`NULL::text`} AS "jdText",
-           ul.status AS "userStatus", ul.score, ul."scoreReason", ul."applicationId"
+           ul.status AS "userStatus", ul.score, ul."scoreReason", ul."applicationId", ul."favoritedAt"
     FROM "JobLead" jl
     LEFT JOIN "UserLead" ul ON ul."jobLeadId" = jl.id AND ul."userId" = ${userId}
     ${where}
@@ -249,6 +253,7 @@ export function summarizeJob(row: Row, duplicates: DuplicateMatch[], liveness?: 
     liveness: liveness ?? null,
     tracking: {
       overlayStatus: row.userStatus ?? "new",
+      favorite: row.favoritedAt !== null,
       applicationId: row.applicationId,
       possibleDuplicates: duplicates,
     },

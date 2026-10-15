@@ -309,6 +309,10 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
       .enum(["new", "dismissed", "closed", "promoted", "any"])
       .default("new")
       .describe("Discover overlay state. new = not promoted, dismissed or closed. closed = marked no longer available."),
+    favoritesOnly: z
+      .boolean()
+      .default(false)
+      .describe('Only jobs the candidate favorited (hearted) in Discover. Use status "any" to include favorites already promoted, dismissed or closed.'),
     sources: z.array(shortText(40)).max(12).optional().describe(`Source ids: ${Object.keys(SOURCE_LABEL).join(", ")}.`),
     locations: z.array(shortText(80)).max(20).optional().describe("Any-of, case-insensitive substring of the listing location, e.g. Pune, Bengaluru, Remote."),
     includeUnknownLocation: z.boolean().default(false),
@@ -391,7 +395,7 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
       const [initialOverlay, index] = await Promise.all([
         prisma.userLead.findUnique({
           where: { userId_jobLeadId: { userId: ctx.userId, jobLeadId: lead.id } },
-          select: { status: true, score: true, scoreReason: true, applicationId: true },
+          select: { status: true, score: true, scoreReason: true, applicationId: true, favoritedAt: true },
         }),
         loadApplicationIndex(ctx.userId),
       ]);
@@ -400,7 +404,7 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
       // already acted on it (promoted or dismissed).
       if (liveness?.status === "closed" && (!overlay || overlay.status === "new")) {
         const updated = await setLeadStatus(ctx.userId, lead.id, "closed");
-        overlay = { status: updated.status, score: updated.score, scoreReason: updated.scoreReason, applicationId: updated.applicationId };
+        overlay = { status: updated.status, score: updated.score, scoreReason: updated.scoreReason, applicationId: updated.applicationId, favoritedAt: updated.favoritedAt };
       }
       const jd = lead.jdText ?? "";
       return jsonResult(`${lead.role} at ${lead.company}.`, {
@@ -433,6 +437,7 @@ export function createYoloApplyMcpServer(ctx: McpContext): McpServer {
         fit: overlay?.score != null ? { score: overlay.score, reason: overlay.scoreReason } : null,
         tracking: {
           overlayStatus: overlay?.status ?? "new",
+          favorite: !!overlay?.favoritedAt,
           applicationId: overlay?.applicationId ?? null,
           duplicates: index.match({ urls: [lead.url, lead.canonicalUrl], company: lead.company, role: lead.role }),
         },

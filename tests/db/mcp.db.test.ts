@@ -12,6 +12,7 @@ import { getApplicationOtp, getApplicationEmail, searchApplicationEmails, type G
 import { PATCH as patchApplication } from "@/app/api/applications/[id]/route";
 import { PATCH as patchLead } from "@/app/api/discovery/leads/[id]/route";
 import { GET as listLeads } from "@/app/api/discovery/leads/route";
+import { setLeadFavorite } from "@/lib/discovery/leadStatus";
 import { GET as listSavedAnswers, DELETE as deleteSavedAnswerRoute } from "@/app/api/settings/saved-answers/route";
 
 // Integration tests on the disposable database: the real HTTP handler, the
@@ -282,6 +283,34 @@ describe("search_jobs", () => {
     );
     expect(summary.sources.reduce((n, s) => n + s.total, 0)).toBeGreaterThanOrEqual(131);
     await c.close();
+  });
+});
+
+describe("favorites", () => {
+  it("search_jobs favoritesOnly returns this candidate's favorites in any status", async () => {
+    const [starred, promoted, plain] = await Promise.all(
+      ["fav-1", "fav-2", "fav-3"].map((externalId) =>
+        prisma.jobLead.create({ data: { source: "sheet", externalId, company: "Fav Co", role: `Role ${externalId}`, postedAt: new Date() } })
+      )
+    );
+    await setLeadFavorite(userA, starred.id, true);
+    await prisma.userLead.create({ data: { userId: userA, jobLeadId: promoted.id, status: "promoted", applicationId: appA } });
+    await setLeadFavorite(userA, promoted.id, true);
+    type Page = { jobs: { jobId: string; tracking: { favorite: boolean } }[] };
+    const search = async (c: Client, extra: Record<string, unknown>) =>
+      structured<Page>(await c.callTool({ name: "search_jobs", arguments: { companies: ["Fav Co"], duplicatePolicy: "flag", limit: 10, ...extra } })).jobs;
+
+    const ca = await client(tokenA);
+    const cb = await client(tokenB);
+    expect((await search(ca, { favoritesOnly: true })).map((j) => j.jobId)).toEqual([starred.id]);
+    expect((await search(ca, { favoritesOnly: true, status: "any" })).map((j) => j.jobId).sort()).toEqual([starred.id, promoted.id].sort());
+    expect(await search(cb, { favoritesOnly: true, status: "any" })).toHaveLength(0); // per-candidate
+    expect((await search(ca, {})).find((j) => j.jobId === plain.id)?.tracking.favorite).toBe(false);
+
+    await setLeadFavorite(userA, starred.id, false);
+    expect(await search(ca, { favoritesOnly: true })).toHaveLength(0);
+    await ca.close();
+    await cb.close();
   });
 });
 

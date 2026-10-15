@@ -49,6 +49,9 @@ export async function GET(req: NextRequest) {
     // that run scored for this user; otherwise filter by the user's status.
     if (scanRunId) {
       where.userLeads = { some: { userId: user.id, scanRunId } };
+    } else if (status === "favorites") {
+      // Starred leads in any status, so a promoted or dismissed favorite still shows.
+      where.userLeads = { some: { userId: user.id, favoritedAt: { not: null } } };
     } else if ((ACTED_LEAD_STATUSES as string[]).includes(status)) {
       where.userLeads = { some: { userId: user.id, status } };
     } else if (status === "new") {
@@ -63,7 +66,7 @@ export async function GET(req: NextRequest) {
       include: {
         userLeads: {
           where: { userId: user.id },
-          select: { status: true, score: true, scoreReason: true, applicationId: true },
+          select: { status: true, score: true, scoreReason: true, applicationId: true, favoritedAt: true },
         },
       },
     });
@@ -79,6 +82,7 @@ export async function GET(req: NextRequest) {
         score: ul?.score ?? null,
         scoreReason: ul?.scoreReason ?? null,
         applicationId: ul?.applicationId ?? null,
+        favorite: !!ul?.favoritedAt,
       };
     });
 

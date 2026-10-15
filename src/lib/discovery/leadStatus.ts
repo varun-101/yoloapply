@@ -47,3 +47,15 @@ export async function setLeadStatus(userId: string, jobLeadId: string, status: S
     update: { status },
   });
 }
+
+/** Stars or unstars a catalog lead for this user. Allowed in any status. */
+export async function setLeadFavorite(userId: string, jobLeadId: string, favorite: boolean) {
+  const lead = await prisma.jobLead.findUnique({ where: { id: jobLeadId }, select: { id: true } });
+  if (!lead) throw new ApiUserError("Job not found.", 404, "not_found");
+  const favoritedAt = favorite ? new Date() : null;
+  return prisma.userLead.upsert({
+    where: { userId_jobLeadId: { userId, jobLeadId } },
+    create: { userId, jobLeadId, favoritedAt },
+    update: { favoritedAt },
+  });
+}
