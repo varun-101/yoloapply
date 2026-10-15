@@ -13,3 +13,6 @@ tsconfig.tsbuildinfo
 .venv
 __pycache__
 .claude/worktrees
+/tmp/
+/.orch/
+/.pytest_cache/

@@ -7,6 +7,7 @@ import type { FetchResult, RawLead } from "./types";
 // each link cell's Target.
 const SPREADSHEET_ID =
   process.env.DISCOVERY_SHEET_ID ?? "1a0_P5Wcf3YTePSlqoxP9fPldDEFyMrW1pFKxF3Xin34";
+const TIMEOUT_MS = 20_000;
 
 // Tabs to ingest from the workbook. They share one column layout (Company Name /
 // Job Role / Job Location / a date column / Source link page / Experience /
@@ -127,7 +128,11 @@ export async function fetchSheetLeads(): Promise<FetchResult> {
   try {
     const res = await fetch(
       `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export?format=xlsx`,
-      { headers: { "User-Agent": "Mozilla/5.0" }, redirect: "follow" }
+      {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        redirect: "follow",
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      }
     );
     if (!res.ok) throw new Error(`sheet export returned HTTP ${res.status}`);
     const wb = XLSX.read(Buffer.from(await res.arrayBuffer()), { type: "buffer" });

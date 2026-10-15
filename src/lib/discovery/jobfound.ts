@@ -10,6 +10,7 @@ const MAX_AGE_DAYS = 14;
 const PAGE_SIZE = 100;
 // Safety valve for a malformed response that reports hasMore forever.
 const MAX_PAGES = 50;
+const TIMEOUT_MS = 20_000;
 
 interface JobfoundJob {
   $id: string;
@@ -61,6 +62,7 @@ export async function fetchJobfoundLeads(): Promise<FetchResult> {
     for (let page = 1; page <= MAX_PAGES; page++) {
       const res = await fetch(pageUrl(page), {
         headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`Jobfound returned HTTP ${res.status}`);
 

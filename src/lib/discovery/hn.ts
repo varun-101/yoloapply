@@ -13,6 +13,7 @@ import type { FetchResult, RawLead } from "./types";
 
 const MAX_EXTRACTIONS_PER_RUN = 10;
 const LLM_BATCH = 5;
+const TIMEOUT_MS = 20_000;
 
 // A post must look India-friendly or remote, and mention a relevant stack.
 const GEO_RE = /\bindia\b|\bremote\b/i;
@@ -48,7 +49,8 @@ interface ExtractedPost {
 
 async function latestThreadId(): Promise<number> {
   const res = await fetch(
-    "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=6"
+    "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=6",
+    { signal: AbortSignal.timeout(TIMEOUT_MS) }
   );
   if (!res.ok) throw new Error(`Algolia search returned HTTP ${res.status}`);
   const json = (await res.json()) as { hits: { objectID: string; title: string }[] };
@@ -65,7 +67,9 @@ export async function fetchHnLeads(seenIds: ReadonlySet<string> = new Set()): Pr
       return { source: "hn", leads: [], error: "server DEEPSEEK_API_KEY not set — HN extraction skipped" };
     }
     const threadId = await latestThreadId();
-    const res = await fetch(`https://hn.algolia.com/api/v1/items/${threadId}`);
+    const res = await fetch(`https://hn.algolia.com/api/v1/items/${threadId}`, {
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`Algolia items returned HTTP ${res.status}`);
     const thread = (await res.json()) as HnItem;
 
