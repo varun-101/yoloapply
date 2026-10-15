@@ -20,6 +20,7 @@ import {
   deriveApplicationReadiness,
 } from "@/lib/application-agent/workflow-types";
 import { parsePreparationReport } from "@/lib/application-agent/preparation";
+import ExportPackButton from "@/components/export-pack-button";
 
 export const dynamic = "force-dynamic";
 
@@ -100,6 +101,14 @@ export default async function AppDetail({ params }: { params: { id: string } }) 
               <MessageSquareText className="h-4 w-4" /> Practice interview
             </Link>
           </Button>
+          <ExportPackButton
+            endpoint={`/api/applications/${app.id}/export`}
+            zipHint={
+              hasPdf
+                ? "Adds the tailored resume PDF + LaTeX source"
+                : "Adds your generic resume PDF if uploaded"
+            }
+          />
           {hasPdf && (
             <Button asChild variant="outline">
               <a href={`/api/applications/${app.id}/resume?format=pdf`} target="_blank" rel="noreferrer">

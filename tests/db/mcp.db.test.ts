@@ -13,6 +13,9 @@ import { PATCH as patchApplication } from "@/app/api/applications/[id]/route";
 import { PATCH as patchLead } from "@/app/api/discovery/leads/[id]/route";
 import { GET as listLeads } from "@/app/api/discovery/leads/route";
 import { setLeadFavorite } from "@/lib/discovery/leadStatus";
+import { GET as exportApplication } from "@/app/api/applications/[id]/export/route";
+import { GET as exportProfile } from "@/app/api/export/profile/route";
+import AdmZip from "adm-zip";
 import { GET as listSavedAnswers, DELETE as deleteSavedAnswerRoute } from "@/app/api/settings/saved-answers/route";
 
 // Integration tests on the disposable database: the real HTTP handler, the
@@ -286,7 +289,56 @@ describe("search_jobs", () => {
   });
 });
 
+describe("interview prep exports", () => {
+  it("exports the authenticated candidate's profile without contact fields", async () => {
+    const response = await exportProfile(new NextRequest(`${BASE}/api/export/profile?format=json`, {
+      headers: { Authorization: `Bearer ${tokenA}` },
+    }));
+    expect(response.status).toBe(200);
+    const pack = await response.json();
+    expect(pack.candidate.name).toBe("Asha Rao");
+    expect(pack.candidate).not.toHaveProperty("email");
+    expect(pack.candidate).not.toHaveProperty("phone");
+    expect(pack.candidate).not.toHaveProperty("applicationAnswers");
+  });
+
+  it("rejects another candidate's application and exports an owned application as a ZIP", async () => {
+    const request = (id: string) => new NextRequest(`${BASE}/api/applications/${id}/export?format=zip`, {
+      headers: { Authorization: `Bearer ${tokenA}` },
+    });
+    expect((await exportApplication(request(appB), { params: { id: appB } })).status).toBe(404);
+    const response = await exportApplication(request(appA), { params: { id: appA } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/zip");
+    const zip = new AdmZip(Buffer.from(await response.arrayBuffer()));
+    const entries = zip.getEntries();
+    expect(entries).toHaveLength(1); // No stored resume in this fixture.
+    expect(entries[0].entryName).toMatch(/Interview_Pack\.md$/);
+    const markdown = zip.readAsText(entries[0]);
+    expect(markdown).toContain("Asha Rao");
+    expect(markdown).not.toContain("Bilal Khan");
+    expect(markdown).not.toContain("asha@test.local");
+  });
+});
+
 describe("favorites", () => {
+  it("keeps favorites separate from status and isolates the Discover view by candidate", async () => {
+    const lead = await prisma.jobLead.create({ data: {
+      source: "sheet", externalId: "fav-route", company: "Favorite route", role: "Engineer",
+    } });
+    await prisma.userLead.create({ data: { userId: userA, jobLeadId: lead.id, status: "dismissed" } });
+    const response = await patchLead(new NextRequest(`${BASE}/api/discovery/leads/${lead.id}`, {
+      method: "PATCH", headers: { Authorization: `Bearer ${tokenA}` }, body: JSON.stringify({ favorite: true }),
+    }), { params: { id: lead.id } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "dismissed" });
+    const favorites = async (token: string) => (await listLeads(new NextRequest(`${BASE}/api/discovery/leads?status=favorites`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }))).json() as Promise<{ id: string; favorite: boolean }[]>;
+    expect(await favorites(tokenA)).toEqual(expect.arrayContaining([expect.objectContaining({ id: lead.id, favorite: true })]));
+    expect((await favorites(tokenB)).some((item) => item.id === lead.id)).toBe(false);
+  });
+
   it("search_jobs favoritesOnly returns this candidate's favorites in any status", async () => {
     const [starred, promoted, plain] = await Promise.all(
       ["fav-1", "fav-2", "fav-3"].map((externalId) =>
