@@ -126,11 +126,11 @@ function likeAny(column: Prisma.Sql, terms: string[]): Prisma.Sql {
 // The columns are timestamp(3) WITHOUT time zone holding UTC. A bound JS Date
 // arrives as timestamptz and would be shifted by the session time zone, so
 // compare against the UTC wall-clock value explicitly.
-function utc(date: Date): Prisma.Sql {
+export function utc(date: Date): Prisma.Sql {
   return Prisma.sql`(${date.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
 }
 
-function escapeLike(s: string): string {
+export function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 

@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -143,6 +143,8 @@ function sourceLabel(s: string): string {
 
 // On phones the filters are a 2-up grid of full-width selects (each one a
 // comfortable tap target); from md they shrink back to an inline filter row.
+const PAGE_SIZE = 50;
+
 const SELECT_CLS =
   "h-11 md:h-9 w-full md:w-auto min-w-0 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-sm text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-signal/70";
 
@@ -157,9 +159,13 @@ export default function DiscoverPage() {
   // Separate window on when a scan discovered the posting (catalog createdAt).
   const [scannedDays, setScannedDays] = useState("");
   const [sort, setSort] = useState("trust");
-  // Free-text search across the loaded catalog (client-side, instant). Matches
+  // Free-text search across the whole catalog (server-side, debounced). Matches
   // every common field so a query like "react remote" or a founder's email lands.
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const loadSeq = useRef(0);
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
@@ -217,13 +223,52 @@ export default function DiscoverPage() {
     if (days) qs.set("days", days);
     if (scannedDays) qs.set("scannedDays", scannedDays);
     if (sort !== "trust") qs.set("sort", sort);
+    if (debouncedQuery.trim()) qs.set("q", debouncedQuery.trim());
+    qs.set("page", String(page));
+    qs.set("pageSize", String(PAGE_SIZE));
+    // Only the latest request may land, so a slow older page can't overwrite it.
+    const seq = ++loadSeq.current;
     const res = await fetch(`/api/discovery/leads?${qs}`);
-    setLeads(await res.json());
-  }, [status, source, jobType, days, scannedDays, sort]);
+    const data = await res.json();
+    if (seq !== loadSeq.current) return;
+    // An error body here used to reach `.map` and crash the whole page.
+    if (!res.ok || !Array.isArray(data?.leads)) throw new Error(data?.error ?? `Leads failed (${res.status})`);
+    const lastPage = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+    if (page > lastPage) return setPage(lastPage); // the list shrank under us
+    setLeads(data.leads);
+    // An in-range page that came back empty means the count raced a change;
+    // zero stops the refetch-on-empty effect below from looping.
+    setTotal(data.leads.length ? data.total : 0);
+  }, [status, source, jobType, days, scannedDays, sort, debouncedQuery, page]);
 
   useEffect(() => {
     load().catch((e) => setErr(String(e)));
   }, [load]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedQuery(query);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  // Acting on leads removes them locally; once a page empties, refetch so the
+  // next rows (or the previous page) slide in.
+  useEffect(() => {
+    if (leads?.length === 0 && total > 0) load().catch((e) => setErr(String(e)));
+  }, [leads, total, load]);
+
+  // Any filter change starts back at page 1 (batched with the filter, one fetch).
+  const onFilter = (set: (v: string) => void) => (e: React.ChangeEvent<HTMLSelectElement>) => {
+    set(e.target.value);
+    setPage(1);
+  };
+
+  function goToPage(p: number) {
+    setPage(p);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   // On page load, restore the progress UI if a scan is already in flight
   // (started before a refresh, or by the scheduled task).
@@ -431,11 +476,13 @@ export default function DiscoverPage() {
         body: JSON.stringify({ status: next }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "Update failed");
+      const stays = status === "all" || status === "favorites" || status === next;
       setLeads((ls) =>
-        status === "all" || status === "favorites" || status === next
+        stays
           ? (ls ?? []).map((l) => (l.id === lead.id ? { ...l, status: next } : l))
           : (ls ?? []).filter((l) => l.id !== lead.id)
       );
+      if (!stays) setTotal((t) => Math.max(0, t - 1));
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -448,11 +495,13 @@ export default function DiscoverPage() {
   async function toggleFavorite(lead: Lead) {
     const favorite = !lead.favorite;
     setErr(null);
+    const leaves = status === "favorites" && !favorite;
     setLeads((ls) =>
-      status === "favorites" && !favorite
+      leaves
         ? (ls ?? []).filter((l) => l.id !== lead.id)
         : (ls ?? []).map((l) => (l.id === lead.id ? { ...l, favorite } : l))
     );
+    if (leaves) setTotal((t) => Math.max(0, t - 1));
     try {
       const res = await fetch(`/api/discovery/leads/${lead.id}`, {
         method: "PATCH",
@@ -465,55 +514,6 @@ export default function DiscoverPage() {
       load();
     }
   }
-
-  // Each space-separated term must match somewhere in the row (AND), so
-  // "react remote" narrows progressively. Sources are matched on both the raw
-  // key and the human label. When a query is active we re-rank so the strongest
-  // matches (company/role) float above rows that only mention the term deep in
-  // their JD text — the existing sort acts as a stable tiebreak.
-  const filteredLeads = useMemo(() => {
-    if (leads === null) return null;
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-    if (terms.length === 0) return leads;
-
-    // Higher weight = more relevant place for a match to land.
-    const fields = (lead: Lead): { text: string; weight: number }[] => {
-      const sourceKeys = (lead.sources ?? lead.source).split(",");
-      return [
-        { text: lead.company, weight: 100 },
-        { text: lead.role, weight: 60 },
-        { text: lead.skills ?? "", weight: 25 },
-        { text: lead.location ?? "", weight: 20 },
-        { text: lead.contactEmail ?? "", weight: 20 },
-        { text: [...sourceKeys, ...sourceKeys.map(sourceLabel)].join(" "), weight: 15 },
-        { text: lead.salary ?? "", weight: 10 },
-        { text: lead.jobType ?? "", weight: 10 },
-        { text: lead.experience ?? "", weight: 10 },
-        { text: lead.scoreReason ?? "", weight: 5 },
-        { text: lead.jdText ?? "", weight: 1 },
-      ].map((f) => ({ text: f.text.toLowerCase(), weight: f.weight }));
-    };
-
-    // A lead matches only if EVERY term appears in some field; its relevance is
-    // the sum over terms of the best (highest-weight) field that term hit.
-    const ranked = leads
-      .map((lead, i) => {
-        const fs = fields(lead);
-        let relevance = 0;
-        for (const t of terms) {
-          let best = 0;
-          for (const f of fs) if (f.text.includes(t)) best = Math.max(best, f.weight);
-          if (best === 0) return null; // this term matched nothing → drop the lead
-          relevance += best;
-        }
-        return { lead, relevance, i };
-      })
-      .filter((r): r is { lead: Lead; relevance: number; i: number } => r !== null);
-
-    // Sort by relevance desc, preserving the incoming order within equal scores.
-    ranked.sort((a, b) => b.relevance - a.relevance || a.i - b.i);
-    return ranked.map((r) => r.lead);
-  }, [leads, query]);
 
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto">
@@ -677,7 +677,7 @@ export default function DiscoverPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-2 mb-4 md:flex md:flex-wrap">
-        <select className={SELECT_CLS} value={status} onChange={(e) => setStatus(e.target.value)}>
+        <select className={SELECT_CLS} value={status} onChange={onFilter(setStatus)}>
           <option value="new">New</option>
           <option value="promoted">Promoted</option>
           <option value="dismissed">Dismissed</option>
@@ -685,7 +685,7 @@ export default function DiscoverPage() {
           <option value="favorites">Favorites</option>
           <option value="all">All</option>
         </select>
-        <select className={SELECT_CLS} value={source} onChange={(e) => setSource(e.target.value)}>
+        <select className={SELECT_CLS} value={source} onChange={onFilter(setSource)}>
           <option value="">All sources</option>
           <option value="sheet">Freshers Sheet</option>
           <option value="jobfound">JobFound</option>
@@ -698,7 +698,7 @@ export default function DiscoverPage() {
           <option value="remoteok">RemoteOK</option>
           <option value="remotive">Remotive</option>
         </select>
-        <select className={SELECT_CLS} value={days} onChange={(e) => setDays(e.target.value)}>
+        <select className={SELECT_CLS} value={days} onChange={onFilter(setDays)}>
           <option value="">Any date</option>
           <option value="1">Today</option>
           <option value="3">Last 3 days</option>
@@ -707,7 +707,7 @@ export default function DiscoverPage() {
         <select
           className={SELECT_CLS}
           value={scannedDays}
-          onChange={(e) => setScannedDays(e.target.value)}
+          onChange={onFilter(setScannedDays)}
           title="Filter by when a scan discovered the posting"
         >
           <option value="">Recently scanned: any</option>
@@ -715,12 +715,12 @@ export default function DiscoverPage() {
           <option value="3">Scanned ≤ 3 days</option>
           <option value="7">Scanned ≤ 7 days</option>
         </select>
-        <select className={SELECT_CLS} value={jobType} onChange={(e) => setJobType(e.target.value)}>
+        <select className={SELECT_CLS} value={jobType} onChange={onFilter(setJobType)}>
           <option value="">Any type</option>
           <option value="Full Time">Full Time</option>
           <option value="Internship">Internship</option>
         </select>
-        <select className={SELECT_CLS} value={sort} onChange={(e) => setSort(e.target.value)}>
+        <select className={SELECT_CLS} value={sort} onChange={onFilter(setSort)}>
           <option value="trust">Trusted sources first</option>
           <option value="newest">Newest first</option>
           <option value="oldest">Oldest first</option>
@@ -729,11 +729,11 @@ export default function DiscoverPage() {
         </select>
       </div>
 
-      {filteredLeads === null ? (
+      {leads === null ? (
         <div className="p-12 text-center text-slate-400 dark:text-slate-500">
           <Loader2 className="h-5 w-5 animate-spin inline" />
         </div>
-      ) : filteredLeads.length === 0 ? (
+      ) : leads.length === 0 ? (
         <Card>
           <CardContent className="p-10 text-center text-sm text-slate-500 dark:text-slate-400">
             {query ? (
@@ -751,7 +751,7 @@ export default function DiscoverPage() {
         </Card>
       ) : (
         <div className="space-y-2">
-          {filteredLeads.map((lead) => (
+          {leads.map((lead) => (
             <Card key={lead.id}>
               <CardContent className="p-4">
                 {/* Phones stack: details first, then a full-width action row.
@@ -914,6 +914,37 @@ export default function DiscoverPage() {
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+
+      {total > 0 && (
+        <div className="mt-4 flex flex-col-reverse items-center gap-3 md:flex-row md:justify-between">
+          <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
+            {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total.toLocaleString()}
+          </span>
+          <div className="flex w-full items-center gap-2 md:w-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1 md:flex-none"
+              disabled={page <= 1}
+              onClick={() => goToPage(page - 1)}
+            >
+              Previous
+            </Button>
+            <span className="font-mono text-xs text-slate-500 dark:text-slate-400 px-2 whitespace-nowrap">
+              {page} / {Math.ceil(total / PAGE_SIZE)}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1 md:flex-none"
+              disabled={page >= Math.ceil(total / PAGE_SIZE)}
+              onClick={() => goToPage(page + 1)}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       )}
     </div>

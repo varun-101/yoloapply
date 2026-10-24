@@ -339,6 +339,39 @@ describe("favorites", () => {
     expect((await favorites(tokenB)).some((item) => item.id === lead.id)).toBe(false);
   });
 
+  it("pages the Discover list in SQL: search, per-user score sort, stable pages, legacy array", async () => {
+    const leads = await Promise.all(
+      [1, 2, 3, 4, 5].map((n) =>
+        prisma.jobLead.create({ data: { source: "lever", externalId: `page-${n}`, company: `Pagerco ${n}`, role: "Engineer", postedAt: new Date(Date.now() - n * 60_000) } })
+      )
+    );
+    const jdOnly = await prisma.jobLead.create({
+      data: { source: "lever", externalId: "page-jd", company: "Other", role: "Engineer", jdText: "We love pagerco tooling", postedAt: new Date() },
+    });
+    await prisma.userLead.create({ data: { userId: userA, jobLeadId: leads[4].id, score: 90 } });
+    await prisma.userLead.create({ data: { userId: userB, jobLeadId: leads[3].id, score: 99 } });
+    type Paged = { leads: { id: string; company: string; score: number | null }[]; total: number };
+    const get = async (qs: string, token = tokenA) =>
+      (await listLeads(new NextRequest(`${BASE}/api/discovery/leads?status=all&${qs}`, { headers: { Authorization: `Bearer ${token}` } }))).json();
+
+    const p1: Paged = await get("q=pagerco&sort=score&page=1&pageSize=2");
+    const p2: Paged = await get("q=pagerco&sort=score&page=2&pageSize=2");
+    const p3: Paged = await get("q=pagerco&sort=score&page=3&pageSize=2");
+    expect(p1.total).toBe(6);
+    // A company hit outranks a JD-only hit; within company hits, this user's score leads.
+    expect(p1.leads.map((l) => l.id)).toEqual([leads[4].id, leads[0].id]);
+    expect(p1.leads[0].score).toBe(90);
+    const seen = [...p1.leads, ...p2.leads, ...p3.leads].map((l) => l.id);
+    expect(new Set(seen).size).toBe(6);
+    expect(seen.at(-1)).toBe(jdOnly.id);
+    // User B's score on another lead doesn't leak into A's ordering or rows.
+    expect([...p1.leads, ...p2.leads, ...p3.leads].find((l) => l.id === leads[3].id)?.score).toBeNull();
+
+    const legacy = await get("q=pagerco");
+    expect(Array.isArray(legacy)).toBe(true);
+    expect(legacy).toHaveLength(6);
+  });
+
   it("search_jobs favoritesOnly returns this candidate's favorites in any status", async () => {
     const [starred, promoted, plain] = await Promise.all(
       ["fav-1", "fav-2", "fav-3"].map((externalId) =>
